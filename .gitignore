@@ -34,3 +34,6 @@ build/
 
 # Trae sandbox
 .trae/
+
+# Local tools
+.workbuddy/
