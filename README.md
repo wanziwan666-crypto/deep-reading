@@ -1,5 +1,7 @@
 深度阅读（LLM Thinking MVP）
 
+English version: [README_EN.md](./README_EN.md)
+
 项目简介
 - 以对话驱动的深度阅读与思考辅助工具
 - 阶段机制：clarify / deepen / challenge / expand / wrap_up（wrap_up 不提问）
@@ -64,4 +66,3 @@ Roadmap（可选）
 - 为更多站点补充正文选择器
 - 将首页同样提供“复制轻量书签（仅 URL）”
 - 在对话页为“文章文本/原文预览”提供 Tab 切换
-
