@@ -105,7 +105,7 @@ function strictAppend(system: string, schemaKey: "claims" | "premises" | "aiMess
     return `${system}\n只输出一个JSON对象：{"text":"..."}；text内可以是自然中文；不要输出JSON外的任何文本；不要使用代码块；只保留一次问句。`
   }
   if (schemaKey === "staged_wrap") {
-    return `${system}\n只输出一个JSON对象：{"text":"..."}；text内可以是自然中文；不要输出JSON外的任何文本；不要使用代码块；不必提问；若提问，也仅允许一个开放式收尾问题（可答可不答）。`
+    return `${system}\n只输出一个JSON对象：{"text":"..."}；text内可以是自然中文；不要输出JSON外的任何文本；不要使用代码块；不要提出任何问题；不要使用问号。`
   }
   if (schemaKey === "depth") {
     return `${system}\n只输出一个JSON对象：{"depth_score":<1-5的数字>,"reason":"..."}；不要输出任何解释或额外文本；不要使用代码块。`
@@ -149,7 +149,8 @@ export async function completeWithSchema<T>(
     if (schemaKey === "staged") {
       if (!text) text = "如果用一句话概括，你最在意的是什么？"
     } else if (schemaKey === "staged_wrap") {
-      if (!text) text = "此刻你最在意的一个点是什么？（可答可不答）"
+      text = text.replace(/[？?]+/g, "").trim()
+      if (!text) text = "好的，我们先收拢在这里。"
     }
     const fallback = { text }
     const v = validate(fallback)

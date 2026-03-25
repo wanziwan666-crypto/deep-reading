@@ -56,7 +56,12 @@ function antiEcho(userInput: string, aiText: string, lastAssistant: string, stag
     }
     return "我理解你的表达。基于你刚才的这段话，如果用一句话来概括，你最在意的是什么？"
   }
-  return keepSingleQuestion(t)
+  let out = keepSingleQuestion(t)
+  if (stage === "wrap_up") {
+    out = out.replace(/[？?]+/g, "").trim()
+    if (!out) out = "好的，我们先收拢在这里。"
+  }
+  return out
 }
 
 function extractUserMsgs(history: string[]): string[] {
@@ -80,6 +85,9 @@ function chooseAdaptiveStage(userInput: string, lastAssistant: string, round: nu
   const lastWasDeepenLike = /(原因|为何|为什么|例子|举例|例如|比如)/.test(normalize(lastAssistant))
   const sentences = t.split(/[。！？!?]/).map(s => s.trim()).filter(Boolean).length
   const lowInfo = (!t || (t.length <= 12 && sentences <= 1 && !hasExample && !hasCausal && !hasCompare))
+  if (String(lastStage || "") === "wrap_up" && lowInfo && !askClarify) {
+    return "wrap_up"
+  }
   const users = extractUserMsgs(history)
   const recent = users.slice(-3)
   const hx = recent.join(" ")
@@ -189,8 +197,10 @@ export async function POST(req: NextRequest) {
       /(因为|由于|因此|所以|导致|造成)/.test(String(userInput ?? "")) ||
       /(但是|然而|另一方面|相反|同时|一方面|另一方面|不是.*而是)/.test(String(userInput ?? "")) ||
       /(还能|还有|相关|拓展|更多|换个角度|拓宽|更深入|挑战|认知|思维)/.test(String(userInput ?? ""))
-    const noveltyHigh = ratio >= 0.25 || signals
-    st = noveltyHigh ? chooseAdaptiveStage(String(userInput ?? ""), lastAssistant, r, histArr) : "wrap_up"
+    const ackLike = /(有道理|赞同|同意|确实|是的|没错|可以|好的|嗯|啊哈|了解|知道了|我明白了)/.test(String(userInput ?? ""))
+    const shortPlain = String(userInput ?? "").trim().length <= 16
+    const noveltyHigh = (!ackLike && ((toksCur.length >= 3 && ratio >= 0.25) || signals)) && !(ackLike && shortPlain)
+    st = noveltyHigh ? chooseAdaptiveStage(String(userInput ?? ""), lastAssistant, r, histArr, "wrap_up") : "wrap_up"
   } else {
     if (status === "wrapping") st = "wrap_up"
   }

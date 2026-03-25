@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
+    "predev:3000": "FORCE_KILL=1 PORT=3000 node scripts/kill-port.mjs",
+    "dev:3000": "next dev -p 3000",
     "build": "next build",
     "start": "next start",
     "lint": "eslint --ext .ts,.tsx .",

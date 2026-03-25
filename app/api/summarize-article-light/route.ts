@@ -7,10 +7,8 @@ function stripHtml(html: string): { text: string; title: string } {
   let t = html || ""
   const titleMatch = t.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
   const title = titleMatch ? titleMatch[1].trim() : ""
-  // remove scripts/styles
   t = t.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
   t = t.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-  // try to extract main content blocks first
   const blocks: string[] = []
   const articleRe = /<article\b[^>]*>([\s\S]*?)<\/article>/gi
   let m: RegExpExecArray | null
@@ -21,7 +19,6 @@ function stripHtml(html: string): { text: string; title: string } {
   if (blocks.length > 0) {
     body = blocks.sort((a, b) => a.length - b.length).pop() || ""
   }
-  // fallback to entire document if no block extracted
   let raw = body || t
   raw = raw.replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, "")
   raw = raw.replace(/<[^>]+>/g, " ")
@@ -56,7 +53,7 @@ export async function POST(req: NextRequest) {
   const verificationRe =
     /(人机验证|验证码|访问验证|安全验证|当前环境异常|完成验证|Cloudflare|Just a moment|Attention Required|Access Denied|verify you are human|captcha)/i
   if (!article || article.length < 200 || verificationRe.test(article)) {
-    return Response.json({ error: "verification_required", title: title || "", article: "", articleSummary: "" })
+    return Response.json({ error: "verification_required", title: title || "", articleSummary: "" })
   }
   let articleSummary = ""
   try {
@@ -72,5 +69,6 @@ export async function POST(req: NextRequest) {
   } catch {
     articleSummary = "这是一篇较长的文章，建议结合标题与首段快速把握核心观点。"
   }
-  return Response.json({ title, article, articleSummary })
+  return Response.json({ title, articleSummary })
 }
+

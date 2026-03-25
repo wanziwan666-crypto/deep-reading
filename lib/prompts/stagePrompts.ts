@@ -10,7 +10,7 @@ export const stagePrompts: Record<StageKey, string> = {
   expand:
     "阶段：expand\n目标：拓展视角或引入相邻话题以扩展思考、激发好奇心\n",
   wrap_up:
-    "阶段：wrap_up\n目标：帮助用户把刚才的思考轻轻收拢\n策略：\n简要复述用户的核心想法（更清晰一点）\n可以给一个开放式收尾问题（可答可不答）\n避免开启新话题或继续深入分析\n",
+    "阶段：wrap_up\n目标：帮助用户把刚才的思考轻轻收拢\n策略：\n简要复述用户的核心想法（更清晰一点）\n不要提出任何问题\n避免开启新话题或继续深入分析\n",
 }
 
 export function getStage(score: number, round: number): StageKey {
