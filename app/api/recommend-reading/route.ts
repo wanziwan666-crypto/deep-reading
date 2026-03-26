@@ -8,12 +8,12 @@ function buildDialogue(stagedHistory: string[], frictionHistory: string[]): stri
   for (let i = 0; i < stagedHistory.length; i++) {
     const msg = String(stagedHistory[i] ?? "").trim()
     if (!msg) continue
-    lines.push((i % 2 === 0 ? "用户: " : "AI: ") + msg)
+    lines.push((i % 2 === 0 ? "你: " : "AI: ") + msg)
   }
   for (let i = 0; i < frictionHistory.length; i++) {
     const msg = String(frictionHistory[i] ?? "").trim()
     if (!msg) continue
-    lines.push((i % 2 === 0 ? "AI: " : "用户: ") + msg)
+    lines.push((i % 2 === 0 ? "AI: " : "你: ") + msg)
   }
   return lines.join("\n")
 }

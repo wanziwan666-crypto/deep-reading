@@ -7,6 +7,7 @@ type RecordItem = {
   ts: number
   article: string
   url?: string
+  title?: string
   articleSummary: string
   dialogueSummary: string
   stage?: string
@@ -33,6 +34,32 @@ export default function RecordsPage() {
     }
   }, [])
 
+  // sanitize legacy titles that were generated from prefixed summary lines
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!Array.isArray(records) || records.length === 0) return
+    const clean = (t: string) =>
+      String(t || "")
+        .replace(/^\s*(核心论点(是)?|主要理由|主要证据|可能局限|要点|结论|摘要|概括)\s*[:：]\s*/g, "")
+        .trim()
+    let changed = false
+    const next = records.map((r) => {
+      const title = clean(r.title || "")
+      const artSum = clean(r.articleSummary || "")
+      if (title !== (r.title || "") || artSum !== (r.articleSummary || "")) {
+        changed = true
+        return { ...r, title, articleSummary: artSum }
+      }
+      return r
+    })
+    if (changed) {
+      setRecords(next)
+      try {
+        window.localStorage.setItem("reading_records", JSON.stringify(next))
+      } catch {}
+    }
+  }, [records])
+
   const remove = (idx: number) => {
     const arr = [...records]
     arr.splice(idx, 1)
@@ -51,21 +78,20 @@ export default function RecordsPage() {
 
   const formatDate = (ts: number) => {
     const d = new Date(ts)
-    const now = new Date()
-    const diff = now.getTime() - d.getTime()
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-
-    if (days === 0) return "今天"
-    if (days === 1) return "昨天"
-    if (days < 7) return `${days} 天前`
-    return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" })
+    return d.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    })
   }
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)]">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm border-b border-[var(--border-subtle)]">
-        <div className="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/" className="btn btn-ghost text-sm">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -83,7 +109,7 @@ export default function RecordsPage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 py-6">
+      <main className="max-w-6xl mx-auto px-6 py-6">
         {records.length === 0 ? (
           <div className="card p-12 text-center">
             <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-[var(--bg-secondary)] flex items-center justify-center">
@@ -104,26 +130,49 @@ export default function RecordsPage() {
             {records.map((r, i) => {
               const id = `record-${r.ts}-${i}`
               const isExpanded = expandedId === id
+              const stripPrefix = (s: string) =>
+                String(s || "")
+                  .replace(/^\s*(核心论点(是)?|主要理由|主要证据|可能局限|要点|结论|摘要|概括)\s*[:：]\s*/g, "")
+                  .trim()
+              const displayTitle = stripPrefix(
+                (r.title && r.title.trim()) ||
+                  ((r.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) ||
+                  (r.article || "").slice(0, 40) ||
+                  ""
+              )
               return (
                 <div key={id} className="card overflow-hidden">
                   {/* Header */}
-                  <button
-                    className="w-full p-4 text-left hover:bg-[var(--bg-secondary)]/50 transition-colors"
+                  <div
+                    className="w-full p-4 text-left hover:bg-[var(--bg-secondary)]/50 transition-colors cursor-pointer"
                     onClick={() => setExpandedId(isExpanded ? null : id)}
                   >
-                        <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="badge badge-gray">{formatDate(r.ts)}</span>
                         </div>
-                        {r.url && (
-                          <p className="text-xs text-[#2563eb] truncate max-w-md">
-                            {r.url}
-                          </p>
-                        )}
-                        <p className="text-sm text-[var(--text-secondary)] mt-2 line-clamp-2">
-                          {r.articleSummary || r.article.slice(0, 100)}
-                        </p>
+                        <div className="text-sm flex items-center gap-3">
+                          <span
+                            className="text-[var(--text-primary)] font-semibold truncate inline-block max-w-md align-baseline"
+                            title={displayTitle || "未命名文章"}
+                          >
+                            {displayTitle || "未命名文章"}
+                          </span>
+                          {r.url && (
+                            <a
+                              href={r.url}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="text-xs text-[#2563eb] underline"
+                              onClick={(e) => e.stopPropagation()}
+                              title={r.url}
+                            >
+                              查看原文
+                            </a>
+                          )}
+                        </div>
+                        {/* collapsed view intentionally shows only title/link */}
                       </div>
                       <svg
                         className={`w-4 h-4 text-[var(--text-tertiary)] transition-transform flex-shrink-0 ${
@@ -136,7 +185,7 @@ export default function RecordsPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </svg>
                     </div>
-                  </button>
+                  </div>
 
                   {/* Expanded Content */}
                   {isExpanded && (

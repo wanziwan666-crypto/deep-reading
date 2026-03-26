@@ -3,10 +3,71 @@ import { completeWithSchema, validateArticleSummary } from "../../../lib/structu
 import { articleSummarySystem, articleSummaryUser } from "../../../lib/prompts/articleSummary"
 import type { Message } from "../../../lib/llmClient"
 
+function textOnly(html: string): string {
+  let t = html || ""
+  t = t.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+  t = t.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+  t = t.replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, "")
+  t = t.replace(/<[^>]+>/g, " ")
+  t = t.replace(/\s+/g, " ").trim()
+  return t
+}
+
+function extractMainBlock(html: string): string {
+  const blocks: string[] = []
+  const articleRe = /<article\b[^>]*>([\s\S]*?)<\/article>/gi
+  let m: RegExpExecArray | null
+  while ((m = articleRe.exec(html))) blocks.push(m[1])
+  const divRe = /<div\b[^>]*(?:id|class)=["'][^"']*(?:article|content|post|entry|main|read|text)[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi
+  while ((m = divRe.exec(html))) blocks.push(m[1])
+  if (blocks.length > 0) {
+    return blocks.sort((a, b) => a.length - b.length).pop() || ""
+  }
+  return html
+}
+
+function extractTitleCandidates(html: string): string[] {
+  const cands: string[] = []
+  const meta = (name: string, attr = "property") => {
+    const re = new RegExp(`<meta[^>]+${attr}=["']${name}["'][^>]*content=["']([^"']+)["']`, "i")
+    const m = html.match(re)
+    if (m && m[1]) cands.push(m[1].trim())
+  }
+  meta("og:title")
+  meta("twitter:title", "name")
+  // title tag
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+  if (titleMatch && titleMatch[1]) cands.push(titleMatch[1].trim())
+  // first h1 in main block
+  const main = extractMainBlock(html)
+  const h1 = main.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)
+  if (h1 && h1[1]) cands.unshift(textOnly(h1[1]).trim())
+  return cands.filter(Boolean)
+}
+
+function normalizeTitle(t: string): string {
+  if (!t) return ""
+  // split by common separators and prefer the first segment
+  const parts = t.split(/\s*[|｜\-–—·:_]\s*/).filter(Boolean)
+  const first = parts.length > 0 ? parts[0] : t
+  return first.trim()
+}
+
+function isInterstitialTitle(t: string): boolean {
+  return /(Just a moment|Access Denied|verify you are human|验证码|人机验证|安全验证|Cloudflare|处理中|访问验证)/i.test(t)
+}
+
+function pickBestTitle(html: string): string {
+  const cands = extractTitleCandidates(html).map(normalizeTitle).filter((s) => s && s.length >= 2)
+  for (const c of cands) {
+    if (!isInterstitialTitle(c)) return c
+  }
+  return cands[0] || ""
+}
+
 function stripHtml(html: string): { text: string; title: string } {
   let t = html || ""
-  const titleMatch = t.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
-  const title = titleMatch ? titleMatch[1].trim() : ""
+  const title = pickBestTitle(t)
   // remove scripts/styles
   t = t.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
   t = t.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -27,6 +88,12 @@ function stripHtml(html: string): { text: string; title: string } {
   raw = raw.replace(/<[^>]+>/g, " ")
   raw = raw.replace(/\s+/g, " ").trim()
   return { text: raw, title }
+}
+
+function sanitizeSummary(t: string): string {
+  return String(t || "")
+    .replace(/(^|\n)\s*核心论点(是)?[:：]\s*/g, "$1")
+    .trim()
 }
 
 export async function POST(req: NextRequest) {
@@ -72,5 +139,5 @@ export async function POST(req: NextRequest) {
   } catch {
     articleSummary = "这是一篇较长的文章，建议结合标题与首段快速把握核心观点。"
   }
-  return Response.json({ title, article, articleSummary })
+  return Response.json({ title, article, articleSummary: sanitizeSummary(articleSummary) })
 }

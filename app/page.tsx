@@ -10,7 +10,8 @@ export default function Page() {
   const [summary, setSummary] = useState("")
   const [showSummary, setShowSummary] = useState(true)
   const [summaryError, setSummaryError] = useState("")
-  const [loading, setLoading] = useState(false)
+  const [loadingSummary, setLoadingSummary] = useState(false)
+  const [loadingSend, setLoadingSend] = useState(false)
   const [thought, setThought] = useState("")
   const [bmTip, setBmTip] = useState("")
   const [showBmTooltip, setShowBmTooltip] = useState(false)
@@ -27,33 +28,99 @@ export default function Page() {
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [])
 
+  // When user pastes a URL, persist url/title to global state immediately
+  useEffect(() => {
+    const v = article.trim()
+    const isUrl = /^https?:\/\//i.test(v)
+    if (!isUrl) return
+    try {
+      const s = getState()
+      if (s.articleUrl !== v) {
+        s.articleUrl = v
+        setState(s)
+      }
+      ;(async () => {
+        try {
+          const r = await fetch(`/api/proxy-article-text?url=${encodeURIComponent(v)}`)
+          if (r.ok) {
+            const j = await r.json()
+            const s2 = getState()
+            if (!s2.articleTitle && j && typeof j.title === "string" && j.title.trim()) {
+              s2.articleTitle = j.title.trim()
+              setState(s2)
+            }
+          }
+        } catch {}
+      })()
+    } catch {}
+  }, [article])
+
   const summarizeFromText = async () => {
     if (!article.trim()) return
-    setLoading(true)
+    setLoadingSummary(true)
     try {
       setSummaryError("")
       // Check if input is a URL
       const isUrl = /^https?:\/\//i.test(article.trim())
       let data
       if (isUrl) {
+        const urlVal = article.trim()
         const res = await fetch("/api/summarize-article", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: article.trim() })
+          body: JSON.stringify({ url: urlVal })
         })
-        data = await res.json()
-        if (data.error) {
-          if (data.error === "verification_required") {
-            setSummaryError("目标页面需要验证（如人机验证/安全校验），无法自动抓取。请手动粘贴正文。")
+        if (res.ok) {
+          data = await res.json()
+          if (data.error) {
+            // fall through to fallback path
+          } else {
+            const s = getState()
+            s.article = String(data.article || "")
+            s.articleUrl = urlVal
+            s.articleSummary = String(data.articleSummary || "")
+            s.articleTitle = String(data.title || "")
+            setState(s)
+            setArticleInput(String(data.article || ""))
+            setSummary(String(data.articleSummary || ""))
+            setShowSummary(true)
             return
           }
-          setSummaryError("抓取失败，请手动粘贴正文。")
-          return
         }
-        const s = getState()
-        s.article = String(data.article || "")
-        s.articleUrl = article.trim()
-        setState(s)
+        // Fallback: robust plain-text extraction via proxy-article-text
+        try {
+          const r2 = await fetch(`/api/proxy-article-text?url=${encodeURIComponent(urlVal)}`)
+          if (r2.ok) {
+            const j2 = await r2.json()
+            const text2 = String(j2.article || "")
+            const title2 = String(j2.title || "")
+            if (text2) {
+              const s = getState()
+              s.article = text2
+              s.articleUrl = urlVal
+              if (title2) s.articleTitle = title2
+              setState(s)
+              setArticleInput(text2)
+              // Generate summary from text
+              const rs = await fetch("/api/summarize-article-text", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ article: text2 })
+              })
+              if (rs.ok) {
+                const js = await rs.json()
+                setSummary(String(js.articleSummary || ""))
+                setShowSummary(true)
+              } else {
+                setSummaryError("生成摘要失败，请稍后重试。")
+              }
+              return
+            }
+          }
+        } catch {}
+        // If both main and fallback fail, show error
+        setSummaryError("目标页面需要验证（如人机验证/安全校验）或抓取失败，请手动粘贴正文。")
+        return
       } else {
         const res = await fetch("/api/summarize-article-text", {
           method: "POST",
@@ -65,21 +132,36 @@ export default function Page() {
           setSummaryError("生成摘要失败，请检查正文是否完整。")
           return
         }
+        const s = getState()
+        s.article = article.trim()
+        s.articleSummary = String(data.articleSummary || "")
+        setState(s)
       }
-      setSummary(String(data.articleSummary || ""))
-      setShowSummary(true)
+      if (data) {
+        setSummary(String(data.articleSummary || ""))
+        setShowSummary(true)
+      }
     } finally {
-      setLoading(false)
+      setLoadingSummary(false)
     }
   }
 
   const sendThought = async () => {
     if (!article.trim() || !thought.trim()) return
-    setLoading(true)
+    setLoadingSend(true)
     try {
+      const prev = getState()
+      const isUrl = /^https?:\/\//i.test(article.trim())
       resetConversation()
       const s = getState()
       s.article = article
+      // Preserve previously captured url/title, or set from current input if it's a URL
+      if (prev.articleUrl) s.articleUrl = prev.articleUrl
+      if (isUrl) s.articleUrl = article.trim()
+      if (prev.articleTitle && !s.articleTitle) s.articleTitle = prev.articleTitle
+      if (summary && !s.articleSummary) {
+        s.articleSummary = summary
+      }
       setState(s)
       const res = await fetch("/api/staged-chat", {
         method: "POST",
@@ -103,16 +185,23 @@ export default function Page() {
       setThought("")
       router.push("/chat")
     } finally {
-      setLoading(false)
+      setLoadingSend(false)
     }
   }
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)]">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm border-b border-[var(--border-subtle)]">
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <h1 className="text-base font-semibold text-[var(--text-primary)]">深度阅读</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold text-[var(--text-primary)]">深度阅读</h1>
+            <img
+              src="/deep-reading-logo.png"
+              alt="Deep Reading"
+              className="h-6 w-auto"
+            />
+          </div>
           <div className="flex items-center gap-2">
             <Link href="/records" className="btn btn-ghost text-sm">
               阅读记录
@@ -179,7 +268,7 @@ export default function Page() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-2xl mx-auto px-6 py-8 space-y-4">
+      <main className="mx-auto px-6 py-8 space-y-4 max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl">
         {bmTip && (
           <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
             {bmTip}
@@ -188,7 +277,7 @@ export default function Page() {
         {/* Step 1: Article Input */}
         <div className="card p-5">
           <div className="flex items-center gap-2 mb-4">
-            <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-medium flex items-center justify-center">1</span>
+            <span className="w-6 h-6 rounded-full bg-[var(--accent-light)] text-[var(--accent)] text-xs font-medium flex items-center justify-center">1</span>
             <h2 className="text-sm font-medium">输入文章</h2>
           </div>
 
@@ -204,9 +293,9 @@ export default function Page() {
               <button
                 className="btn btn-secondary"
                 onClick={summarizeFromText}
-                disabled={!article.trim() || loading}
+                disabled={!article.trim() || loadingSummary}
               >
-                {loading ? <span className="spinner" /> : "生成摘要"}
+                {loadingSummary ? <span className="spinner" /> : "生成摘要"}
               </button>
             </div>
             {summaryError && (
@@ -225,7 +314,7 @@ export default function Page() {
               onClick={() => setShowSummary(!showSummary)}
             >
               <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-medium flex items-center justify-center">2</span>
+                <span className="w-6 h-6 rounded-full bg-[var(--accent-light)] text-[var(--accent)] text-xs font-medium flex items-center justify-center">2</span>
                 <span className="section-title">文章摘要</span>
               </div>
               <span className="text-xs text-[var(--text-tertiary)]">
@@ -260,9 +349,9 @@ export default function Page() {
           <button
             className="btn btn-primary"
             onClick={sendThought}
-            disabled={!article.trim() || !thought.trim() || loading}
+            disabled={!article.trim() || !thought.trim() || loadingSummary || loadingSend}
           >
-            {loading ? (
+            {loadingSend ? (
               <span className="spinner" />
             ) : (
               <>
@@ -280,7 +369,7 @@ export default function Page() {
           <h3 className="text-sm font-medium mb-3">使用提示</h3>
           <ul className="space-y-3">
             <li className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-blue-50 text-blue-600 text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
+              <div className="w-5 h-5 rounded-full bg-[var(--accent-light)] text-[var(--accent)] text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>

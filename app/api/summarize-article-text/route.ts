@@ -3,6 +3,12 @@ import { completeWithSchema, validateArticleSummary } from "../../../lib/structu
 import { articleSummarySystem, articleSummaryUser } from "../../../lib/prompts/articleSummary"
 import type { Message } from "../../../lib/llmClient"
 
+function sanitizeSummary(t: string): string {
+  return String(t || "")
+    .replace(/(^|\n)\s*核心论点是[:：]\s*/g, "$1")
+    .trim()
+}
+
 export async function POST(req: NextRequest) {
   const { article } = await req.json()
   if (!article || typeof article !== "string" || article.trim().length < 50) {
@@ -22,5 +28,5 @@ export async function POST(req: NextRequest) {
   } catch {
     articleSummary = "文章较长或结构复杂，建议先抓取标题与核心段落以快速把握要点。"
   }
-  return Response.json({ articleSummary })
+  return Response.json({ articleSummary: sanitizeSummary(articleSummary) })
 }

@@ -5,6 +5,7 @@ export type ConversationState = {
   article: string
   articleUrl?: string
   articleSummary?: string
+  articleTitle?: string
   // legacy fields kept for compatibility with existing pages
   claims: string[]
   selectedClaim: string
@@ -24,6 +25,7 @@ export const defaultState: ConversationState = {
   article: "",
   articleUrl: "",
   articleSummary: "",
+  articleTitle: "",
   claims: [],
   selectedClaim: "",
   premises: [],

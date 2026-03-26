@@ -3,6 +3,12 @@ import { summarizeSystem, summarizeUser } from "../../../lib/prompts/summarize"
 import { completeWithSchema, validateSummary } from "../../../lib/structured"
 import type { Message } from "../../../lib/llmClient"
 
+function sanitizeSummary(t: string): string {
+  return String(t || "")
+    .replace(/(^|\n)\s*核心论点是[:：]\s*/g, "$1")
+    .trim()
+}
+
 function buildStagedText(history: string[]): string {
   const lines: string[] = []
   for (let i = 0; i < history.length; i++) {
@@ -44,5 +50,5 @@ export async function POST(req: NextRequest) {
     articleSummary = "文章主要观点已阐述，涉及背景、核心论点与关键证据。"
     dialogueSummary = "对话梳理了你的主要观点与疑问，并形成了一个明确的下一步思考方向。"
   }
-  return Response.json({ articleSummary, dialogueSummary })
+  return Response.json({ articleSummary: sanitizeSummary(articleSummary), dialogueSummary })
 }

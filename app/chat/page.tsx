@@ -12,6 +12,7 @@ export default function ChatPage() {
   const [showArticle, setShowArticle] = useState(false)
   const [showClaims, setShowClaims] = useState(true)
   const [showPremises, setShowPremises] = useState(false)
+  const [showSummary, setShowSummary] = useState(false)
   const [thought, setThought] = useState("")
   const [saveTip, setSaveTip] = useState("")
   const [savedRecord, setSavedRecord] = useState<any | null>(null)
@@ -45,6 +46,54 @@ export default function ChatPage() {
   useEffect(() => {
     try {
       if (typeof window === "undefined") return
+      const onMsg = async (ev: MessageEvent) => {
+        try {
+          if (!ev || typeof ev.data !== "object") return
+          const d = ev.data as any
+          if (d && d.type === "INGEST_ARTICLE") {
+            const url = String(d.url || "")
+            const title = String(d.title || "")
+            const html = String(d.html || "")
+            if (!html && !url) return
+            setLoading(true)
+            try {
+              // ingest html/text to server
+              const res = await fetch("/api/ingest-article", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url, title, html })
+              })
+              const j = await res.json()
+              if (j && j.id) {
+              const r2 = await fetch(`/api/ingest-article?id=${encodeURIComponent(j.id)}`)
+                const d2 = await r2.json()
+                const s = getState()
+                s.article = String(d2.article || "")
+                s.articleUrl = url || s.articleUrl || ""
+              s.articleTitle = title || s.articleTitle || ""
+                setState(s)
+                setLocal({ ...s })
+                // fill summary if absent
+                if (!s.articleSummary && s.article) {
+                  const rs = await fetch("/api/summarize-article-text", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ article: s.article })
+                  })
+                  const js = await rs.json()
+                  const s2 = getState()
+                  s2.articleSummary = String(js.articleSummary || "")
+                  setState(s2)
+                  setLocal({ ...s2 })
+                }
+              }
+            } finally {
+              setLoading(false)
+            }
+          }
+        } catch {}
+      }
+      window.addEventListener("message", onMsg)
       const raw = window.localStorage.getItem("pending_thought")
       if (!raw) return
       if (state.stagedHistory && state.stagedHistory.length > 0) return
@@ -88,8 +137,63 @@ export default function ChatPage() {
           try { window.localStorage.removeItem("pending_thought") } catch {}
         }
       })()
+      // no cleanup of message listener because we keep page alive
     } catch {}
   }, [])
+
+  const ensureArticleLoaded = async () => {
+    try {
+      if (state.article || !state.articleUrl) return
+      setLoading(true)
+      let filled = false
+      try {
+        const res = await fetch("/api/summarize-article", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: state.articleUrl })
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const s = getState()
+          if (!s.article && data.article) s.article = String(data.article || "")
+          if (!s.articleSummary && data.articleSummary) s.articleSummary = String(data.articleSummary || "")
+          if (!s.articleTitle && data.title) s.articleTitle = String(data.title || "")
+          setState(s)
+          setLocal({ ...s })
+          filled = !!s.article
+        }
+      } catch {}
+      if (!filled) {
+        // fallback: use proxy-article-text for robust plain-text extraction
+        const r2 = await fetch(`/api/proxy-article-text?url=${encodeURIComponent(state.articleUrl)}`)
+        if (r2.ok) {
+          const j2 = await r2.json()
+          const s2 = getState()
+          s2.article = String(j2.article || "")
+          if (!s2.articleTitle && j2.title) s2.articleTitle = String(j2.title || "")
+          setState(s2)
+          setLocal({ ...s2 })
+          // generate summary if absent
+          if (!s2.articleSummary && s2.article) {
+            try {
+              const rs = await fetch("/api/summarize-article-text", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ article: s2.article })
+              })
+              const js = await rs.json()
+              const s3 = getState()
+              s3.articleSummary = String(js.articleSummary || "")
+              setState(s3)
+              setLocal({ ...s3 })
+            } catch {}
+          }
+        }
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const sendStaged = async () => {
     if (!thought.trim()) return
@@ -262,6 +366,10 @@ export default function ChatPage() {
     setSaveTip("")
     setShowSavingModal(true)
     try {
+      const currentTitle =
+        (state.articleTitle || "").trim() ||
+        ((state.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) ||
+        (state.article || "").slice(0, 40)
       const res = await fetch("/api/summarize-reading", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -276,6 +384,7 @@ export default function ChatPage() {
         ts: Date.now(),
         article: state.article,
         url: state.articleUrl || "",
+        title: currentTitle || "",
         articleSummary: data.articleSummary ?? "",
         dialogueSummary: data.dialogueSummary ?? "",
         stage: state.currentStage,
@@ -325,8 +434,8 @@ export default function ChatPage() {
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)]">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm border-b border-[var(--border-subtle)]">
-        <div className="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/" className="btn btn-ghost text-sm">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -344,7 +453,64 @@ export default function ChatPage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 py-6">
+      <main className="max-w-6xl mx-auto px-6 py-6">
+        {(state.article || state.articleUrl) && (
+          <div className="card mb-4">
+            <button
+              className="collapsible-header w-full text-left"
+              onClick={() => {
+                const next = !showArticle
+                setShowArticle(next)
+                if (next) ensureArticleLoaded()
+              }}
+            >
+              <span className="section-title">文章</span>
+              <span className="text-xs text-[var(--text-tertiary)]">{showArticle ? "收起" : "展开"}</span>
+            </button>
+            {showArticle && (
+              <div className="p-4 space-y-2">
+                {state.article ? (
+                  <div className="whitespace-pre-wrap text-sm text-[var(--text-secondary)]">{state.article}</div>
+                ) : loading ? (
+                  <div className="text-xs text-[var(--text-tertiary)]">正在获取全文...</div>
+                ) : state.articleUrl ? (
+                  <div className="space-y-2">
+                    <div className="text-xs text-[var(--text-tertiary)]">未能自动获取全文，你可以点击下方按钮尝试提取纯文本：</div>
+                    <button
+                      className="btn btn-secondary text-xs"
+                      onClick={ensureArticleLoaded}
+                      disabled={loading}
+                    >
+                      {loading ? <span className="spinner" /> : "提取纯文本"}
+                    </button>
+                    <div className="text-xs text-[var(--text-tertiary)]">或打开原文：</div>
+                    <a className="text-[#2563eb] hover:underline text-sm break-all" href={state.articleUrl} target="_blank" rel="noreferrer">
+                      {state.articleUrl}
+                    </a>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+        {state.articleSummary && (
+          <div className="card mb-4">
+            <button
+              className="collapsible-header w-full text-left"
+              onClick={() => setShowSummary(!showSummary)}
+            >
+              <span className="section-title">文章摘要</span>
+              <span className="text-xs text-[var(--text-tertiary)]">{showSummary ? "收起" : "展开"}</span>
+            </button>
+            {showSummary && (
+              <div className="p-4">
+                <div className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap">
+                  {state.articleSummary}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {/* Claims Section */}
         {state.claims.length > 0 && (
           <div className="card mb-4">
@@ -473,9 +639,7 @@ export default function ChatPage() {
                       key={`staged-${i}`}
                       className={`p-4 rounded-xl ${i % 2 === 0 ? "bubble-user" : "bubble-ai"}`}
                     >
-                      <div className="text-xs text-[var(--text-tertiary)] mb-1">
-                        {i % 2 === 0 ? "你" : "AI 教练"}
-                      </div>
+                      <div className="text-xs text-[var(--text-tertiary)] mb-1">{i % 2 === 0 ? "你" : "AI 教练"}</div>
                       <p className="text-sm leading-relaxed">{msg}</p>
                     </div>
                   ))}
@@ -490,9 +654,7 @@ export default function ChatPage() {
                       key={`friction-${i}`}
                       className={`p-4 rounded-xl ${i % 2 === 0 ? "bubble-ai" : "bubble-user"}`}
                     >
-                      <div className="text-xs text-[var(--text-tertiary)] mb-1">
-                        {i % 2 === 0 ? "AI 教练" : "你"}
-                      </div>
+                      <div className="text-xs text-[var(--text-tertiary)] mb-1">{i % 2 === 0 ? "AI 教练" : "你"}</div>
                       <p className="text-sm leading-relaxed">{msg}</p>
                     </div>
                   ))}
@@ -729,7 +891,11 @@ export default function ChatPage() {
                               {r.author && <span className="text-sm text-[var(--text-secondary)]">（{r.author}）</span>}
                               <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">{r.type}</span>
                             </div>
-                            {r.reason && <p className="text-sm text-[var(--text-secondary)] mt-1.5 leading-relaxed">{r.reason}</p>}
+                            {r.reason && (
+                              <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-sm text-amber-900 leading-relaxed">
+                                {r.reason}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </li>
