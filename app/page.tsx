@@ -331,9 +331,16 @@ export default function Page() {
         <div className="flex gap-4">
           <div className={`${sidebarCollapsed ? "w-12" : "w-80"} transition-all`}>
             <div className="card p-3 md:p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm text-[var(--text-secondary)]">阅读记录</div>
-                <button className="btn btn-ghost text-xs" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+              <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "justify-between"} mb-2`}>
+                {!sidebarCollapsed && (
+                  <div className="flex items-center gap-2 text-sm md:text-base font-semibold text-[var(--text-primary)]">
+                    <svg className="w-4 h-4 md:w-5 md:h-5 text-[var(--text-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M3 12h18M3 19h18" />
+                    </svg>
+                    <span>阅读记录</span>
+                  </div>
+                )}
+                <button className="btn btn-ghost text-xs" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? "展开" : "收起"}>
                   <svg className={`w-4 h-4 text-[var(--text-tertiary)] ${sidebarCollapsed ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
@@ -341,21 +348,27 @@ export default function Page() {
               </div>
               {!sidebarCollapsed && (
                 <div className="space-y-2">
-                  {records.slice(0, 50).map((r, i) => {
-                    const title = cleanTitle(r.title || "") || cleanTitle((r.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) || (r.article || "").slice(0, 40) || "未命名文章"
-                    const active = selectedRecordIndex === i
-                    return (
-                      <button
-                        key={`r-${r.ts}-${i}`}
-                        className={`w-full text-left p-3 rounded-lg border ${active ? "bg-[var(--accent-light)] border-[var(--accent)]/30" : "bg-[var(--bg-secondary)] border-[var(--border)] hover:bg-[var(--bg-tertiary)]"}`}
-                        title={title}
-                        onClick={() => setSelectedRecordIndex(i)}
-                      >
-                        <div className="text-sm font-semibold truncate">{title}</div>
-                        <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{formatDate(r.ts)}</div>
-                      </button>
-                    )
-                  })}
+                  {records.length === 0 ? (
+                    <div className="text-xs text-[var(--text-tertiary)] px-2 py-3">
+                      你还没有阅读记录哦，从今天开始吧！
+                    </div>
+                  ) : (
+                    records.slice(0, 50).map((r, i) => {
+                      const title = cleanTitle(r.title || "") || cleanTitle((r.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) || (r.article || "").slice(0, 40) || "未命名文章"
+                      const active = selectedRecordIndex === i
+                      return (
+                        <button
+                          key={`r-${r.ts}-${i}`}
+                          className={`w-full text-left p-3 rounded-lg border ${active ? "bg-[var(--accent-light)] border-[var(--accent)]/30" : "bg-[var(--bg-secondary)] border-[var(--border)] hover:bg-[var(--bg-tertiary)]"}`}
+                          title={title}
+                          onClick={() => setSelectedRecordIndex(i)}
+                        >
+                          <div className="text-sm font-semibold truncate">{title}</div>
+                          <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{formatDate(r.ts)}</div>
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
               )}
             </div>

@@ -144,9 +144,16 @@ export default function RecordsPage() {
         ) : (
           <div className="md:flex md:gap-4">
             <div className={`card p-3 md:p-4 mb-4 md:mb-0 ${sidebarCollapsed ? "md:w-14" : "md:w-80"} transition-all`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm text-[var(--text-secondary)]">阅读记录</div>
-                <button className="btn btn-ghost text-xs" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+              <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "justify-between"} mb-2`}>
+                {!sidebarCollapsed && (
+                  <div className="flex items-center gap-2 text-sm md:text-base font-semibold text-[var(--text-primary)]">
+                    <svg className="w-4 h-4 md:w-5 md:h-5 text-[var(--text-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M3 12h18M3 19h18" />
+                    </svg>
+                    <span>阅读记录</span>
+                  </div>
+                )}
+                <button className="btn btn-ghost text-xs" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? "展开" : "收起"}>
                   <svg className={`w-4 h-4 text-[var(--text-tertiary)] ${sidebarCollapsed ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
