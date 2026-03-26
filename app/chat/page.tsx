@@ -195,6 +195,38 @@ export default function ChatPage() {
     }
   }
 
+  useEffect(() => {
+    if (!state.articleUrl) return
+    if (state.article && state.articleSummary) return
+    ensureArticleLoaded()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.articleUrl])
+
+  useEffect(() => {
+    const genSummary = async () => {
+      try {
+        if (!state.article || state.articleSummary) return
+        setLoading(true)
+        const rs = await fetch("/api/summarize-article-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ article: state.article })
+        })
+        if (rs.ok) {
+          const js = await rs.json()
+          const s2 = getState()
+          s2.articleSummary = String(js.articleSummary || "")
+          setState(s2)
+          setLocal({ ...s2 })
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+    genSummary()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.article])
+
   const sendStaged = async () => {
     if (!thought.trim()) return
     setLoading(true)
@@ -434,26 +466,23 @@ export default function ChatPage() {
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)]">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-50 bg-[var(--accent-light)] border-b border-[var(--accent)]/20 shadow-sm">
+        <div className="w-full px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3 ml-2 md:ml-4">
             <Link href="/" className="btn btn-ghost text-sm">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
               返回
             </Link>
-            <h1 className="text-base font-medium">思考对话</h1>
+            <h1 className="text-xl font-semibold">思考对话</h1>
           </div>
-          <div className="flex items-center gap-2">
-            <Link href="/records" className="btn btn-ghost text-sm">
-              记录
-            </Link>
-          </div>
+          <div className="mr-4 md:mr-6" />
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-6">
+      <main className="w-full px-6 py-6">
+        <div className="max-w-4xl mx-auto space-y-4">
         {(state.article || state.articleUrl) && (
           <div className="card mb-4">
             <button
@@ -608,25 +637,7 @@ export default function ChatPage() {
 
         {/* Dialogue Area */}
         <div className="card">
-          {/* Thought Input (when no dialogue yet) */}
-          {state.stagedHistory.length === 0 && state.frictionHistory.length === 0 && (
-            <div className="p-5 border-b border-[var(--border-subtle)]">
-              <h3 className="section-title mb-3">表达你的想法</h3>
-              <textarea
-                className="textarea h-32 mb-3"
-                value={thought}
-                onChange={(e) => setThought(e.target.value)}
-                placeholder="写下你对这篇文章的想法与感受"
-              />
-              <button
-                className="btn btn-primary"
-                disabled={!thought.trim() || loading}
-                onClick={sendStaged}
-              >
-                {loading ? <span className="spinner" /> : "发送给教练"}
-              </button>
-            </div>
-          )}
+          {/* Thought Input moved to bottom bar */}
 
           {/* Dialogue History */}
           {(state.stagedHistory.length > 0 || state.frictionHistory.length > 0) && (
@@ -669,157 +680,74 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Input Area */}
-          {(state.stagedHistory.length > 0 || state.frictionHistory.length > 0) && (
-            <div className="p-4 border-t border-[var(--border-subtle)]">
-              {state.stagedHistory.length > 0 ? (
-                <div className="flex gap-2">
-                  <textarea
-                    className="textarea flex-1 h-24"
-                    value={thought}
-                    onChange={(e) => setThought(e.target.value)}
-                    placeholder="你的回答"
-                    onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && thought.trim() && !loading) {
-                        e.preventDefault()
-                        sendStaged()
-                      }
-                    }}
-                  />
-                  <div className="flex flex-col gap-2">
-                    <button
-                      className="btn btn-primary"
-                      disabled={!thought.trim() || loading}
-                      onClick={sendStaged}
-                    >
-                      {loading ? <span className="spinner" /> : "发送"}
-                    </button>
-                    <button
-                      className="btn btn-secondary text-xs"
-                      onClick={() => {
-                        saveRecord()
-                        endDiscussion()
-                      }}
-                      disabled={loading}
-                    >
-                      保存
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <textarea
-                    className="textarea flex-1 h-24"
-                    value={reply}
-                    onChange={(e) => setReply(e.target.value)}
-                    placeholder="你的回答"
-                    onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && reply.trim() && !loading) {
-                        e.preventDefault()
-                        runFriction()
-                      }
-                    }}
-                  />
-                  <div className="flex flex-col gap-2">
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => runFriction()}
-                      disabled={loading || !reply.trim()}
-                    >
-                      {loading ? <span className="spinner" /> : "回答"}
-                    </button>
-                    <button
-                      className="btn btn-secondary text-xs"
-                      onClick={() => {
-                        const s: ConversationState = { ...state, stage: "premise_select" }
-                        update(s)
-                      }}
-                    >
-                      返回
-                    </button>
-                  </div>
-                </div>
-              )}
+          {/* Input moved to bottom bar */}
+        </div>
+
+        {/* End Panel removed after save to avoid redundancy */}
+        </div>
+      </main>
+
+      {/* Bottom Input Bar */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[var(--border-subtle)]">
+        <div className="max-w-4xl mx-auto px-6 py-3">
+          {state.stagedHistory.length === 0 && state.frictionHistory.length === 0 ? (
+            <div className="flex gap-2">
+              <textarea
+                className="textarea flex-1 h-24"
+                value={thought}
+                onChange={(e) => setThought(e.target.value)}
+                placeholder="写下你对这篇文章的想法与感受"
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && thought.trim() && !loading) {
+                    e.preventDefault()
+                    sendStaged()
+                  }
+                }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={sendStaged}
+                disabled={loading || !thought.trim()}
+              >
+                {loading ? <span className="spinner" /> : "发送给教练"}
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <textarea
+                className="textarea flex-1 h-24"
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                placeholder="你的回答"
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && reply.trim() && !loading) {
+                    e.preventDefault()
+                    runFriction()
+                  }
+                }}
+              />
+              <div className="flex flex-col gap-2">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => runFriction()}
+                  disabled={loading || !reply.trim()}
+                >
+                  {loading ? <span className="spinner" /> : "回答"}
+                </button>
+                <button
+                  className="btn btn-secondary text-xs"
+                  onClick={() => {
+                    saveRecord()
+                  }}
+                  disabled={loading}
+                >
+                  保存
+                </button>
+              </div>
             </div>
           )}
         </div>
-
-        {/* End Panel */}
-        {showEndPanel && state.stage === "end" && (
-          <div className="card mt-4 p-5">
-            <h3 className="text-lg font-medium mb-4">讨论已结束</h3>
-
-            {state.premises.filter((p) => p !== state.selectedPremise).length > 0 && (
-              <div className="mb-4">
-                <h4 className="text-sm font-medium text-[var(--text-secondary)] mb-2">继续讨论另一条前提</h4>
-                <div className="flex flex-wrap gap-2">
-                  {state.premises
-                    .filter((p) => p !== state.selectedPremise)
-                    .map((p, i) => (
-                      <button
-                        key={i}
-                        className="btn btn-secondary text-sm"
-                        onClick={() => {
-                          update({
-                            ...state,
-                            selectedPremise: p,
-                            userReason: "",
-                            frictionHistory: [],
-                            stage: "premise_select"
-                          })
-                          setShowEndPanel(false)
-                        }}
-                      >
-                        {p.slice(0, 30)}...
-                      </button>
-                    ))}
-                </div>
-              </div>
-            )}
-
-            {state.claims.filter((c) => c !== state.selectedClaim).length > 0 && (
-              <div className="mb-4">
-                <h4 className="text-sm font-medium text-[var(--text-secondary)] mb-2">继续讨论另一个主张</h4>
-                <div className="flex flex-wrap gap-2">
-                  {state.claims
-                    .filter((c) => c !== state.selectedClaim)
-                    .map((c, i) => (
-                      <button
-                        key={i}
-                        className="btn btn-secondary text-sm"
-                        onClick={() => {
-                          update({
-                            ...state,
-                            selectedClaim: c,
-                            premises: [],
-                            selectedPremise: "",
-                            userReason: "",
-                            frictionHistory: [],
-                            stage: "premise_select"
-                          })
-                          setShowEndPanel(false)
-                        }}
-                      >
-                        {c.slice(0, 30)}...
-                      </button>
-                    ))}
-                </div>
-              </div>
-            )}
-
-            <button
-              className="btn btn-danger"
-              onClick={() => {
-                resetConversation()
-                window.location.href = "/"
-              }}
-            >
-              返回首页
-            </button>
-          </div>
-        )}
-      </main>
-
+      </div>
       {/* Saving Modal */}
       {showSavingModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
