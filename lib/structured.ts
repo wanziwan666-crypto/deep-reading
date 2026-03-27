@@ -1,10 +1,5 @@
 import { llmComplete, type Message } from "./llmClient"
 
-export type ExtractClaims = { claims: string[] }
-export type Premises = { premises: string[] }
-export type Friction = { aiMessage: string }
-export type StartFriction = { message: string }
-export type ContinueFriction = { reply: string; question: string }
 export type Staged = { text: string }
 export type DepthScore = { depth_score: number; reason: string }
 export type Summary = { article_summary: string; dialogue_summary: string }
@@ -39,68 +34,7 @@ function safeJson(text: string): any {
   }
 }
 
-function uniqueStrings(arr: string[]): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const s of arr) {
-    const v = (s ?? "").trim()
-    if (!v) continue
-    if (seen.has(v)) continue
-    seen.add(v)
-    out.push(v)
-  }
-  return out
-}
-
-export function validateExtractClaims(obj: any): ExtractClaims {
-  if (!obj || !Array.isArray(obj.claims)) throw new Error("schema_claims")
-  const claims = uniqueStrings(obj.claims).slice(0, 5)
-  if (claims.length < 3) throw new Error("schema_count")
-  return { claims }
-}
-
-export function validatePremises(obj: any): Premises {
-  if (!obj || !Array.isArray(obj.premises)) throw new Error("schema_premises")
-  const premises = uniqueStrings(obj.premises).slice(0, 5)
-  if (premises.length < 3) throw new Error("schema_count")
-  return { premises }
-}
-
-export function validateFriction(obj: any): Friction {
-  if (!obj || typeof obj.aiMessage !== "string") throw new Error("schema_msg")
-  const aiMessage = obj.aiMessage.trim()
-  if (!aiMessage) throw new Error("schema_empty")
-  return { aiMessage }
-}
-
-export function validateStartFriction(obj: any): StartFriction {
-  if (!obj || typeof obj.message !== "string") throw new Error("schema_msg")
-  const message = obj.message.trim()
-  if (!message) throw new Error("schema_empty")
-  return { message }
-}
-
-export function validateContinueFriction(obj: any): ContinueFriction {
-  if (!obj || typeof obj.reply !== "string" || typeof obj.question !== "string") throw new Error("schema_msg")
-  const reply = obj.reply.trim()
-  const question = obj.question.trim()
-  if (!reply || !question) throw new Error("schema_empty")
-  return { reply, question }
-}
-
-function strictAppend(system: string, schemaKey: "claims" | "premises" | "aiMessage" | "start" | "continue" | "staged" | "staged_wrap" | "depth" | "summary" | "article" | "recommend"): string {
-  if (schemaKey === "claims") {
-    return `${system}\n只输出一个JSON对象：{"claims":["..."]}，包含3-5条字符串；不要输出任何解释或额外文本。`
-  }
-  if (schemaKey === "premises") {
-    return `${system}\n只输出一个JSON对象：{"premises":["..."]}，包含3-5条字符串；不要输出任何解释或额外文本。`
-  }
-  if (schemaKey === "start") {
-    return `${system}\n只输出一个JSON对象：{"message":"..."}；不要输出任何解释或额外文本；不要使用代码块。`
-  }
-  if (schemaKey === "continue") {
-    return `${system}\n只输出一个JSON对象：{"reply":"...","question":"..."}；不要输出任何解释或额外文本；不要使用代码块。`
-  }
+function strictAppend(system: string, schemaKey: "staged" | "staged_wrap" | "depth" | "summary" | "article" | "recommend"): string {
   if (schemaKey === "staged") {
     return `${system}\n只输出一个JSON对象：{"text":"..."}；text内可以是自然中文；不要输出JSON外的任何文本；不要使用代码块；只保留一次问句。`
   }
@@ -125,7 +59,7 @@ function strictAppend(system: string, schemaKey: "claims" | "premises" | "aiMess
 export async function completeWithSchema<T>(
   system: string,
   messages: Message[],
-  schemaKey: "claims" | "premises" | "aiMessage" | "start" | "continue" | "staged" | "staged_wrap" | "depth" | "summary" | "article" | "recommend",
+  schemaKey: "staged" | "staged_wrap" | "depth" | "summary" | "article" | "recommend",
   validate: (obj: any) => T,
   retries = 2
 ): Promise<T> {

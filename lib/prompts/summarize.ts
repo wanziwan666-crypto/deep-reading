@@ -6,14 +6,12 @@ export function summarizeSystem(): string {
   ].join("\n")
 }
 
-export function summarizeUser(article: string, stagedHistory: string, frictionHistory: string): string {
+export function summarizeUser(article: string, stagedHistory: string, _frictionHistory?: string): string {
   return [
     "文章：",
     article,
     "思考对话历史：",
     stagedHistory || "（无）",
-    "认知摩擦历史：",
-    frictionHistory || "（无）",
     '输出：只返回JSON {"article_summary":"...","dialogue_summary":"..."}'
   ].join("\n")
 }

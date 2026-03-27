@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { getState, setState, resetConversation, type ConversationState } from "../../state/conversationState"
 
@@ -10,37 +10,26 @@ export default function ChatPage() {
   const [reply, setReply] = useState("")
   const [error, setError] = useState("")
   const [showArticle, setShowArticle] = useState(false)
-  const [showClaims, setShowClaims] = useState(true)
-  const [showPremises, setShowPremises] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
   const [thought, setThought] = useState("")
   const [saveTip, setSaveTip] = useState("")
   const [savedRecord, setSavedRecord] = useState<any | null>(null)
   const [showSavedRecord, setShowSavedRecord] = useState(false)
-  const [showEndPanel, setShowEndPanel] = useState(false)
   const [showSavingModal, setShowSavingModal] = useState(false)
+  const historyRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setLocal(getState())
   }, [])
 
   useEffect(() => {
-    if (state.stage === "claim_select") {
-      setShowArticle(false)
-      setShowClaims(true)
-      setShowPremises(false)
-    } else if (state.stage === "premise_select") {
-      setShowArticle(false)
-      setShowClaims(false)
-      setShowPremises(true)
-    } else if (state.stage === "friction") {
-      setShowArticle(false)
-      setShowClaims(false)
-      setShowPremises(false)
-    } else if (state.stage === "end") {
-      setShowEndPanel(true)
+    const el = historyRef.current
+    if (el) {
+      el.scrollTop = el.scrollHeight
     }
-  }, [state.stage])
+  }, [state.stagedHistory.length])
+
+  
 
   // consume pending thought from homepage to avoid double navigation races
   useEffect(() => {
@@ -57,7 +46,6 @@ export default function ChatPage() {
             if (!html && !url) return
             setLoading(true)
             try {
-              // ingest html/text to server
               const res = await fetch("/api/ingest-article", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -65,15 +53,14 @@ export default function ChatPage() {
               })
               const j = await res.json()
               if (j && j.id) {
-              const r2 = await fetch(`/api/ingest-article?id=${encodeURIComponent(j.id)}`)
+                const r2 = await fetch(`/api/ingest-article?id=${encodeURIComponent(j.id)}`)
                 const d2 = await r2.json()
                 const s = getState()
                 s.article = String(d2.article || "")
                 s.articleUrl = url || s.articleUrl || ""
-              s.articleTitle = title || s.articleTitle || ""
+                s.articleTitle = title || s.articleTitle || ""
                 setState(s)
                 setLocal({ ...s })
-                // fill summary if absent
                 if (!s.articleSummary && s.article) {
                   const rs = await fetch("/api/summarize-article-text", {
                     method: "POST",
@@ -122,7 +109,10 @@ export default function ChatPage() {
             })
           })
           const data = await res.json()
-          const history = [pendingUser, data.aiMessage ?? ""].filter(Boolean)
+          const stg0 = String(data.stage ?? "")
+          const ai0 = String(data.aiMessage ?? "")
+          const ai0Final = stg0 === "wrap-up" || stg0 === "wrap_up" ? (ai0.startsWith("总结：") ? ai0 : `总结：${ai0}`) : ai0
+          const history = [pendingUser, ai0Final].filter(Boolean)
           const s2 = getState()
           s2.article = s2.article || pendingArticle
           s2.stagedHistory = history
@@ -227,36 +217,37 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.article])
 
-  const sendStaged = async () => {
-    if (!thought.trim()) return
+  const sendStaged = async (message?: string) => {
+    const content = (message ?? thought).trim()
+    if (!content) return
     setLoading(true)
     try {
-      const nextHistory = [...state.stagedHistory, thought.trim()]
+      const nextHistory = [...state.stagedHistory, content]
       const res = await fetch("/api/staged-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           article: state.article,
-          userInput: thought.trim(),
+          userInput: content,
           history: nextHistory,
           lastScore: state.lastScore ?? 1
         })
       })
       const data = await res.json()
-      const history = [...nextHistory, data.aiMessage ?? ""].filter(Boolean)
+      const stg1 = String(data.stage ?? "")
+      const ai1 = String(data.aiMessage ?? "")
+      const ai1Final = stg1 === "wrap-up" || stg1 === "wrap_up" ? (ai1.startsWith("总结：") ? ai1 : `总结：${ai1}`) : ai1
+      const history = [...nextHistory, ai1Final].filter(Boolean)
       const s = getState()
       s.stagedHistory = history
       s.currentStage = data.stage ?? ""
       s.currentRound = data.round ?? s.currentRound + 1
       s.lastScore = data.score ?? s.lastScore
       s.lastScoreReason = data.scoreReason ?? s.lastScoreReason
-      if (data.stage === "end") {
-        s.stage = "end"
-        setShowEndPanel(true)
-      }
       setState(s)
       setLocal(s)
       setThought("")
+      setReply("")
     } finally {
       setLoading(false)
     }
@@ -267,131 +258,11 @@ export default function ChatPage() {
     setLocal(s)
   }
 
-  const extractClaims = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch("/api/extract-claims", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ article: state.article })
-      })
-      const data = await res.json()
-      update({ ...state, claims: data.claims ?? [], stage: "premise_select" })
-    } finally {
-      setLoading(false)
-    }
-  }
+  
 
-  const generatePremises = async (claimOverride?: string) => {
-    const claim = claimOverride ?? state.selectedClaim
-    if (!claim) return
-    setLoading(true)
-    try {
-      const res = await fetch("/api/generate-premises", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ claim, article: state.article })
-      })
-      const data = await res.json()
-      const current = getState()
-      update({ ...current, selectedClaim: claim, premises: data.premises ?? [], stage: "premise_select" })
-    } finally {
-      setLoading(false)
-    }
-  }
+ 
 
-  useEffect(() => {
-    const current = getState()
-    if (current.selectedClaim && current.premises.length === 0 && !loading) {
-      generatePremises(current.selectedClaim)
-    }
-  }, [state.selectedClaim, state.premises.length])
-
-  const runFriction = async (premiseOverride?: string) => {
-    const premiseVal = premiseOverride ?? state.selectedPremise
-    if (!premiseVal) return
-    setLoading(true)
-    setError("")
-    {
-      const current = getState()
-      const base = Array.isArray(current.frictionHistory) ? current.frictionHistory : []
-      const withPlaceholder = base.length === 0 ? [...base, "正在生成问题…"] : base
-      update({
-        ...current,
-        selectedPremise: premiseVal || current.selectedPremise,
-        stage: "friction",
-        frictionHistory: withPlaceholder
-      })
-    }
-    try {
-      if (state.frictionHistory.length === 0) {
-        const res = await fetch("/api/start-friction", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            claim: state.selectedClaim,
-            premise: premiseVal,
-            reason: "",
-            article: state.article,
-            history: []
-          })
-        })
-        if (!res.ok) throw new Error("start_failed")
-        const data = await res.json()
-        const current = getState()
-        const base = Array.isArray(current.frictionHistory) ? current.frictionHistory : []
-        const history =
-          base.length > 0 && base[base.length - 1] === "正在生成问题…"
-            ? [...base.slice(0, -1), data.aiMessage ?? ""]
-            : [...base, data.aiMessage ?? ""]
-        update({
-          ...getState(),
-          selectedPremise: premiseVal || current.selectedPremise,
-          selectedClaim: state.selectedClaim || current.selectedClaim,
-          frictionHistory: history,
-          stage: "friction"
-        })
-      } else {
-        if (!reply.trim()) return
-        const nextHistory = [...state.frictionHistory, reply.trim()]
-        const res = await fetch("/api/continue-friction", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            claim: state.selectedClaim,
-            premise: state.selectedPremise,
-            reason: "",
-            article: state.article,
-            history: nextHistory,
-            userReply: reply.trim()
-          })
-        })
-        if (!res.ok) throw new Error("continue_failed")
-        const data = await res.json()
-        const current = getState()
-        const base = Array.isArray(current.frictionHistory) ? current.frictionHistory : []
-        const merged = base.length >= nextHistory.length ? base : nextHistory
-        const history = [...merged, data.aiMessage ?? ""].filter(Boolean)
-        update({
-          ...getState(),
-          selectedPremise: current.selectedPremise || state.selectedPremise,
-          selectedClaim: current.selectedClaim || state.selectedClaim,
-          frictionHistory: history,
-          stage: "friction"
-        })
-        setReply("")
-      }
-    } catch (e) {
-      setError("生成下一条问题失败，请重试")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const endDiscussion = () => {
-    update({ ...state, stage: "end" })
-    setShowEndPanel(true)
-  }
+  
 
   const saveRecord = async () => {
     setLoading(true)
@@ -407,8 +278,7 @@ export default function ChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           article: state.article,
-          stagedHistory: state.stagedHistory,
-          frictionHistory: state.frictionHistory
+          stagedHistory: state.stagedHistory
         })
       })
       const data = await res.json()
@@ -421,10 +291,7 @@ export default function ChatPage() {
         dialogueSummary: (typeof data.dialogueSummary === "string" ? data.dialogueSummary : "")?.replace(/用户/g, "你") ?? "",
         stage: state.currentStage,
         score: state.lastScore,
-        claim: state.selectedClaim,
-        premise: state.selectedPremise,
-        stagedHistory: state.stagedHistory,
-        frictionHistory: state.frictionHistory
+        stagedHistory: state.stagedHistory
       }
       let recommendations: any[] = []
       try {
@@ -432,8 +299,7 @@ export default function ChatPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            stagedHistory: state.stagedHistory,
-            frictionHistory: state.frictionHistory
+            stagedHistory: state.stagedHistory
           })
         })
         const d2 = await r2.json()
@@ -461,7 +327,7 @@ export default function ChatPage() {
     }
   }
 
-  const hasDialogue = state.stagedHistory.length > 0 || state.frictionHistory.length > 0
+  const hasDialogue = state.stagedHistory.length > 0
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)]">
@@ -540,108 +406,15 @@ export default function ChatPage() {
             )}
           </div>
         )}
-        {/* Claims Section */}
-        {state.claims.length > 0 && (
-          <div className="card mb-4">
-            <button
-              className="collapsible-header w-full text-left"
-              onClick={() => setShowClaims(!showClaims)}
-            >
-              <span className="section-title">论点</span>
-              <div className="flex items-center gap-2">
-                {state.selectedClaim && (
-                  <span className="badge badge-blue">{state.selectedClaim.slice(0, 20)}...</span>
-                )}
-                <span className="text-xs text-[var(--text-tertiary)]">
-                  {showClaims ? "收起" : "展开"}
-                </span>
-              </div>
-            </button>
-            {showClaims && (
-              <div className="p-4">
-                {!state.selectedClaim && (
-                  <button
-                    className="btn btn-secondary text-xs mb-3"
-                    onClick={extractClaims}
-                    disabled={loading}
-                  >
-                    {loading ? <span className="spinner" /> : "提取论点"}
-                  </button>
-                )}
-                <div className="grid grid-cols-2 gap-2">
-                  {state.claims.map((c, i) => (
-                    <button
-                      key={i}
-                      className={`p-3 text-left text-sm rounded-lg transition-colors border ${
-                        state.selectedClaim === c
-                          ? "bg-blue-50 border-blue-200"
-                          : "bg-[var(--bg-secondary)] border-transparent hover:border-[var(--border)]"
-                      }`}
-                      onClick={() => {
-                        const current = { ...state, selectedClaim: c }
-                        update(current)
-                        generatePremises(c)
-                      }}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Premises Section */}
-        {state.premises.length > 0 && (
-          <div className="card mb-4">
-            <button
-              className="collapsible-header w-full text-left"
-              onClick={() => setShowPremises(!showPremises)}
-            >
-              <span className="section-title">前提</span>
-              <div className="flex items-center gap-2">
-                {state.selectedPremise && (
-                  <span className="badge badge-blue">{state.selectedPremise.slice(0, 20)}...</span>
-                )}
-                <span className="text-xs text-[var(--text-tertiary)]">
-                  {showPremises ? "收起" : "展开"}
-                </span>
-              </div>
-            </button>
-            {showPremises && (
-              <div className="p-4">
-                <div className="grid grid-cols-2 gap-2">
-                  {state.premises.map((p, i) => (
-                    <button
-                      key={i}
-                      className={`p-3 text-left text-sm rounded-lg transition-colors border ${
-                        state.selectedPremise === p
-                          ? "bg-blue-50 border-blue-200"
-                          : "bg-[var(--bg-secondary)] border-transparent hover:border-[var(--border)]"
-                      }`}
-                      onClick={() => {
-                        const s = { ...state, selectedPremise: p }
-                        update(s)
-                        runFriction(p)
-                      }}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        
 
         {/* Dialogue Area */}
-        <div className="card">
+        <div className="border-0 bg-transparent shadow-none rounded-none p-0">
           {/* Thought Input moved to bottom bar */}
 
           {/* Dialogue History */}
-          {(state.stagedHistory.length > 0 || state.frictionHistory.length > 0) && (
-            <div className="max-h-[50vh] overflow-auto p-4 space-y-4">
+          {state.stagedHistory.length > 0 && (
+            <div ref={historyRef} className="max-h-[calc(100vh-240px)] overflow-auto p-4 space-y-4">
               {/* Staged Chat History */}
               {state.stagedHistory.length > 0 && (
                 <>
@@ -657,20 +430,7 @@ export default function ChatPage() {
                 </>
               )}
 
-              {/* Friction History */}
-              {state.frictionHistory.length > 0 && (
-                <>
-                  {state.frictionHistory.map((msg, i) => (
-                    <div
-                      key={`friction-${i}`}
-                      className={`p-4 rounded-xl ${i % 2 === 0 ? "bubble-ai" : "bubble-user"}`}
-                    >
-                      <div className="text-xs text-[var(--text-tertiary)] mb-1">{i % 2 === 0 ? "AI 教练" : "你"}</div>
-                      <p className="text-sm leading-relaxed">{msg}</p>
-                    </div>
-                  ))}
-                </>
-              )}
+              {/* friction history removed */}
 
               {error && (
                 <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
@@ -690,7 +450,7 @@ export default function ChatPage() {
       {/* Bottom Input Bar */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[var(--border-subtle)]">
         <div className="max-w-4xl mx-auto px-6 py-3">
-          {state.stagedHistory.length === 0 && state.frictionHistory.length === 0 ? (
+          {state.stagedHistory.length === 0 ? (
             <div className="flex gap-2">
               <textarea
                 className="textarea flex-1 h-24"
@@ -706,7 +466,7 @@ export default function ChatPage() {
               />
               <button
                 className="btn btn-primary"
-                onClick={sendStaged}
+                onClick={() => sendStaged()}
                 disabled={loading || !thought.trim()}
               >
                 {loading ? <span className="spinner" /> : "发送给教练"}
@@ -722,14 +482,14 @@ export default function ChatPage() {
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && reply.trim() && !loading) {
                     e.preventDefault()
-                    runFriction()
+                    sendStaged(reply)
                   }
                 }}
               />
               <div className="flex flex-col gap-2">
                 <button
                   className="btn btn-primary"
-                  onClick={() => runFriction()}
+                  onClick={() => sendStaged(reply)}
                   disabled={loading || !reply.trim()}
                 >
                   {loading ? <span className="spinner" /> : "回答"}

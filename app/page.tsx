@@ -25,8 +25,10 @@ export default function Page() {
   const [savedRecord, setSavedRecord] = useState<any | null>(null)
   const [showSavedRecord, setShowSavedRecord] = useState(false)
   const [showReturnConfirm, setShowReturnConfirm] = useState(false)
+  const [savedThisSession, setSavedThisSession] = useState(false)
   const bmButtonRef = useRef<HTMLButtonElement>(null)
   const selectionLockedRef = useRef(false)
+  const homeHistoryRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -58,6 +60,11 @@ export default function Page() {
       setRecords([])
     }
   }, [])
+
+  useEffect(() => {
+    const el = homeHistoryRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [conv?.stagedHistory?.length])
 
   const removeRecord = (idx: number) => {
     try {
@@ -327,7 +334,12 @@ export default function Page() {
       const data = await res.json()
       const s2 = getState()
       s2.article = article
-      s2.stagedHistory = [thought.trim(), data.aiMessage ?? ""].filter(Boolean)
+      {
+        const stg = String(data.stage ?? "")
+        const ai = String(data.aiMessage ?? "")
+        const aiFinal = stg === "wrap-up" || stg === "wrap_up" ? (ai.startsWith("总结：") ? ai : `总结：${ai}`) : ai
+        s2.stagedHistory = [thought.trim(), aiFinal].filter(Boolean)
+      }
       s2.currentStage = data.stage ?? ""
       s2.currentRound = data.round ?? 1
       s2.lastScore = data.score ?? null
@@ -358,7 +370,10 @@ export default function Page() {
         })
       })
       const data = await res.json()
-      const history = [...nextHistory, data.aiMessage ?? ""].filter(Boolean)
+      const stg = String(data.stage ?? "")
+      const ai = String(data.aiMessage ?? "")
+      const aiFinal = stg === "wrap-up" || stg === "wrap_up" ? (ai.startsWith("总结：") ? ai : `总结：${ai}`) : ai
+      const history = [...nextHistory, aiFinal].filter(Boolean)
       const s = getState()
       s.stagedHistory = history
       s.currentStage = data.stage ?? ""
@@ -383,8 +398,7 @@ export default function Page() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           article: s.article,
-          stagedHistory: s.stagedHistory,
-          frictionHistory: s.frictionHistory
+          stagedHistory: s.stagedHistory
         })
       })
       const data = await res.json()
@@ -404,10 +418,7 @@ export default function Page() {
         dialogueSummary,
         stage: s.currentStage,
         score: s.lastScore,
-        claim: s.selectedClaim,
-        premise: s.selectedPremise,
-        stagedHistory: s.stagedHistory,
-        frictionHistory: s.frictionHistory
+        stagedHistory: s.stagedHistory
       }
       let recommendations: any[] = []
       try {
@@ -415,8 +426,7 @@ export default function Page() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            stagedHistory: s.stagedHistory,
-            frictionHistory: s.frictionHistory
+            stagedHistory: s.stagedHistory
           })
         })
         const d2 = await r2.json()
@@ -432,6 +442,7 @@ export default function Page() {
           setRecords(arr)
           setSavedRecord(rec)
           setShowSavedRecord(true)
+          setSavedThisSession(true)
         } catch {
           setSavedRecord(null)
           setShowSavedRecord(false)
@@ -459,15 +470,22 @@ export default function Page() {
             className="absolute top-1/2 -translate-y-1/2"
             style={{ left: sidebarCollapsed ? "4rem" : "21rem" }}
           >
-            {(selectedRecordIndex !== null || (getState().stagedHistory?.length ?? 0) > 0 || (getState().frictionHistory?.length ?? 0) > 0) && (
+            {(selectedRecordIndex !== null || (getState().stagedHistory?.length ?? 0) > 0) && (
               <button
                 className="btn btn-ghost text-base hover:bg-transparent hover:text-[var(--text-primary)]"
                 onClick={() => {
                   if (selectedRecordIndex !== null) {
                     setSelectedRecordIndex(null)
                   } else {
-                    const hasHistory = (getState().stagedHistory?.length ?? 0) > 0 || (getState().frictionHistory?.length ?? 0) > 0
-                    if (hasHistory) {
+                    const hasHistory = (getState().stagedHistory?.length ?? 0) > 0
+                    if (savedThisSession) {
+                      resetConversation()
+                      const s = getState()
+                      setState(s)
+                      setConv({ ...s })
+                      setThought("")
+                      setReply("")
+                    } else if (hasHistory) {
                       setShowReturnConfirm(true)
                     } else {
                       resetConversation()
@@ -645,7 +663,7 @@ export default function Page() {
                           <p className="text-sm text-[var(--text-primary)]">{String(r.dialogueSummary || "").replace(/用户/g, "你")}</p>
                         </div>
                       )}
-                      {(r.stagedHistory?.length || r.frictionHistory?.length) && (
+                      {r.stagedHistory?.length && (
                         <details className="group">
                           <summary className="text-xs font-medium text-[var(--text-secondary)] cursor-pointer hover:text-[var(--text-primary)] flex items-center gap-1">
                             <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -660,30 +678,8 @@ export default function Page() {
                                 <p className="mt-1 leading-relaxed">{m}</p>
                               </div>
                             ))}
-                            {r.frictionHistory?.map((m: string, idx: number) => (
-                              <div key={`friction-${idx}`} className={`p-3 rounded-lg text-sm ${idx % 2 === 0 ? "bg-blue-50" : "bg-white"}`}>
-                                <span className="text-[var(--text-tertiary)] text-xs font-medium">{idx % 2 === 0 ? "AI" : "你"}</span>
-                                <p className="mt-1 leading-relaxed">{m}</p>
-                              </div>
-                            ))}
                           </div>
                         </details>
-                      )}
-                      {(r.claim || r.premise) && (
-                        <div className="flex flex-wrap gap-2">
-                          {r.claim && (
-                            <div className="text-xs bg-[var(--bg-secondary)] px-3 py-2 rounded-lg">
-                              <span className="text-[var(--text-tertiary)]">主张：</span>
-                              <span className="text-[var(--text-secondary)]">{r.claim}</span>
-                            </div>
-                          )}
-                          {r.premise && (
-                            <div className="text-xs bg-[var(--bg-secondary)] px-3 py-2 rounded-lg">
-                              <span className="text-[var(--text-tertiary)]">前提：</span>
-                              <span className="text-[var(--text-secondary)]">{r.premise}</span>
-                            </div>
-                          )}
-                        </div>
                       )}
                       {Array.isArray(r.recommendations) && r.recommendations.length > 0 && (
                         <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5 mt-6">
@@ -723,26 +719,14 @@ export default function Page() {
                 {bmTip}
               </div>
                 )}
-                
-                
-                {(getState().stagedHistory?.length > 0 || getState().frictionHistory?.length > 0) && (
-                  <div className="card">
-                    <div className="max-h-[50vh] overflow-auto p-4 space-y-4">
+                {(getState().stagedHistory?.length > 0) && (
+                  <div className="border-0 bg-transparent shadow-none rounded-none p-0">
+                    <div ref={homeHistoryRef} className="max-h-[calc(100vh-240px)] overflow-auto p-4 space-y-4">
                       {getState().stagedHistory?.length > 0 && (
                         <>
                           {getState().stagedHistory.map((msg, i) => (
                             <div key={`staged-${i}`} className={`p-4 rounded-xl ${i % 2 === 0 ? "bubble-user" : "bubble-ai"}`}>
                               <div className="text-xs text-[var(--text-tertiary)] mb-1">{i % 2 === 0 ? "你" : "AI 教练"}</div>
-                              <p className="text-sm leading-relaxed">{msg}</p>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                      {getState().frictionHistory?.length > 0 && (
-                        <>
-                          {getState().frictionHistory.map((msg, i) => (
-                            <div key={`friction-${i}`} className={`p-4 rounded-xl ${i % 2 === 0 ? "bubble-ai" : "bubble-user"}`}>
-                              <div className="text-xs text-[var(--text-tertiary)] mb-1">{i % 2 === 0 ? "AI 教练" : "你"}</div>
                               <p className="text-sm leading-relaxed">{msg}</p>
                             </div>
                           ))}

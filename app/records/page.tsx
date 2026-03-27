@@ -12,10 +12,7 @@ type RecordItem = {
   dialogueSummary: string
   stage?: string
   score?: number
-  claim?: string
-  premise?: string
   stagedHistory?: string[]
-  frictionHistory?: string[]
   recommendations?: Array<{ title: string; author: string; type: string; reason: string }>
 }
 
@@ -209,7 +206,7 @@ export default function RecordsPage() {
                           <p className="text-sm text-[var(--text-primary)]">{String(r.dialogueSummary || "").replace(/用户/g, "你")}</p>
                         </div>
                       )}
-                      {(r.stagedHistory?.length || r.frictionHistory?.length) && (
+                      {r.stagedHistory?.length && (
                         <details className="group">
                           <summary className="text-xs font-medium text-[var(--text-secondary)] cursor-pointer hover:text-[var(--text-primary)] flex items-center gap-1">
                             <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -224,30 +221,9 @@ export default function RecordsPage() {
                                 <p className="mt-1 leading-relaxed">{m}</p>
                               </div>
                             ))}
-                            {r.frictionHistory?.map((m: string, idx: number) => (
-                              <div key={`friction-${idx}`} className={`p-3 rounded-lg text-sm ${idx % 2 === 0 ? "bg-blue-50" : "bg-white"}`}>
-                                <span className="text-[var(--text-tertiary)] text-xs font-medium">{idx % 2 === 0 ? "AI" : "你"}</span>
-                                <p className="mt-1 leading-relaxed">{m}</p>
-                              </div>
-                            ))}
+                            
                           </div>
                         </details>
-                      )}
-                      {(r.claim || r.premise) && (
-                        <div className="flex flex-wrap gap-2">
-                          {r.claim && (
-                            <div className="text-xs bg-[var(--bg-secondary)] px-3 py-2 rounded-lg">
-                              <span className="text-[var(--text-tertiary)]">主张：</span>
-                              <span className="text-[var(--text-secondary)]">{r.claim}</span>
-                            </div>
-                          )}
-                          {r.premise && (
-                            <div className="text-xs bg-[var(--bg-secondary)] px-3 py-2 rounded-lg">
-                              <span className="text-[var(--text-tertiary)]">前提：</span>
-                              <span className="text-[var(--text-secondary)]">{r.premise}</span>
-                            </div>
-                          )}
-                        </div>
                       )}
                       {Array.isArray(r.recommendations) && r.recommendations.length > 0 && (
                         <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5 mt-6">
