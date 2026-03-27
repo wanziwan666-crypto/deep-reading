@@ -22,6 +22,8 @@ export default function RecordsPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
   const [tip, setTip] = useState<string>("")
   const fileInputId = "import-records-input"
+  const [syncId, setSyncId] = useState<string>("")
+  const [syncIdInput, setSyncIdInput] = useState<string>("")
 
   const mergeByTs = (base: RecordItem[], incoming: RecordItem[]) => {
     const map = new Map<number, RecordItem>()
@@ -46,6 +48,19 @@ export default function RecordsPage() {
     } catch {
       setRecords([])
     }
+  }, [])
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const r = await fetch("/api/anon-init", { credentials: "include" })
+        const j = await r.json()
+        if (j?.anonId) {
+          setSyncId(j.anonId)
+          setSyncIdInput(j.anonId)
+        }
+      } catch {}
+    })()
   }, [])
 
   // sanitize legacy titles that were generated from prefixed summary lines
@@ -127,6 +142,48 @@ export default function RecordsPage() {
             <h1 className="text-xl font-semibold">阅读记录</h1>
           </div>
           <div className="flex items-center gap-2 mr-4 md:mr-6">
+            <div className="hidden md:flex items-center gap-1 mr-2">
+              <span className="text-xs text-[var(--text-tertiary)]">同步码</span>
+              <input
+                value={syncIdInput}
+                onChange={(e) => setSyncIdInput(e.target.value)}
+                className="input input-sm w-40"
+                placeholder="输入或粘贴"
+              />
+              <button
+                className="btn btn-ghost text-xs"
+                title="应用同步码（设置 anon_id）"
+                onClick={async () => {
+                  try {
+                    const v = (syncIdInput || "").trim()
+                    if (!v) return
+                    const r = await fetch(`/api/anon-init?id=${encodeURIComponent(v)}`, { credentials: "include" })
+                    const j = await r.json()
+                    if (j?.anonId) {
+                      setSyncId(j.anonId)
+                      setSyncIdInput(j.anonId)
+                      setTip("已应用同步码")
+                      setTimeout(() => setTip(""), 2000)
+                    }
+                  } catch {}
+                }}
+              >
+                应用
+              </button>
+              <button
+                className="btn btn-ghost text-xs"
+                title="复制当前同步码"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(syncId || "")
+                    setTip("已复制同步码")
+                    setTimeout(() => setTip(""), 1500)
+                  } catch {}
+                }}
+              >
+                复制
+              </button>
+            </div>
             <button
               className="btn btn-primary text-xs"
               title="将本机阅读记录上传到服务器（匿名演示）"
