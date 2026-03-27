@@ -20,6 +20,8 @@ export default function RecordsPage() {
   const [records, setRecords] = useState<RecordItem[]>([])
   const [selectedIndex, setSelectedIndex] = useState<number>(0)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  const [tip, setTip] = useState<string>("")
+  const fileInputId = "import-records-input"
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -115,15 +117,80 @@ export default function RecordsPage() {
             </Link>
             <h1 className="text-xl font-semibold">阅读记录</h1>
           </div>
-          {records.length > 0 && (
-            <button className="btn btn-ghost text-sm text-red-600 mr-4 md:mr-6" onClick={clearAll}>
-              清空
+          <div className="flex items-center gap-2 mr-4 md:mr-6">
+            <button
+              className="btn btn-secondary text-xs"
+              onClick={() => {
+                try {
+                  const data = JSON.stringify(records, null, 2)
+                  const blob = new Blob([data], { type: "application/json" })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement("a")
+                  const ts = new Date().toISOString().slice(0, 10).replace(/-/g, "")
+                  a.href = url
+                  a.download = `reading_records_${ts}.json`
+                  document.body.appendChild(a)
+                  a.click()
+                  document.body.removeChild(a)
+                  URL.revokeObjectURL(url)
+                } catch {
+                  setTip("导出失败")
+                  setTimeout(() => setTip(""), 2000)
+                }
+              }}
+            >
+              导出 JSON
             </button>
-          )}
+            <label className="btn btn-ghost text-xs cursor-pointer" htmlFor={fileInputId}>
+              导入 JSON
+            </label>
+            <input
+              id={fileInputId}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={async (e) => {
+                try {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  const text = await f.text()
+                  const arr = JSON.parse(text)
+                  if (!Array.isArray(arr)) throw new Error("bad")
+                  const merged = (() => {
+                    const map = new Map<number, RecordItem>()
+                    for (const r of records) map.set(Number(r?.ts) || 0, r)
+                    for (const r of arr) {
+                      if (r && typeof r.ts === "number" && r.articleSummary && r.dialogueSummary) {
+                        map.set(Number(r.ts) || 0, r)
+                      }
+                    }
+                    return Array.from(map.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0))
+                  })()
+                  setRecords(merged)
+                  if (typeof window !== "undefined") {
+                    window.localStorage.setItem("reading_records", JSON.stringify(merged))
+                  }
+                  setTip("已导入并合并")
+                  setTimeout(() => setTip(""), 2000)
+                } catch {
+                  setTip("导入失败：格式不正确")
+                  setTimeout(() => setTip(""), 2500)
+                } finally {
+                  e.currentTarget.value = ""
+                }
+              }}
+            />
+            {records.length > 0 && (
+              <button className="btn btn-ghost text-sm text-red-600" onClick={clearAll}>
+                清空
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
       <main className="w-full px-6 py-6">
+        {tip && <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">{tip}</div>}
         {records.length === 0 ? (
           <div className="card p-12 text-center">
             <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-[var(--bg-secondary)] flex items-center justify-center">

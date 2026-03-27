@@ -37,3 +37,6 @@ build/
 
 # Local tools
 .workbuddy/
+
+# Local demo data
+.data/
