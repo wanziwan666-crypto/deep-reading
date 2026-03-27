@@ -418,7 +418,7 @@ export default function ChatPage() {
         url: state.articleUrl || "",
         title: currentTitle || "",
         articleSummary: data.articleSummary ?? "",
-        dialogueSummary: data.dialogueSummary ?? "",
+        dialogueSummary: (typeof data.dialogueSummary === "string" ? data.dialogueSummary : "")?.replace(/用户/g, "你") ?? "",
         stage: state.currentStage,
         score: state.lastScore,
         claim: state.selectedClaim,
@@ -797,7 +797,7 @@ export default function ChatPage() {
 
               <div>
                 <h4 className="text-sm font-medium mb-1">对话摘要</h4>
-                <p className="text-sm text-[var(--text-secondary)]">{savedRecord.dialogueSummary || "无"}</p>
+                <p className="text-sm text-[var(--text-secondary)]">{String(savedRecord.dialogueSummary || "").replace(/用户/g, "你") || "无"}</p>
               </div>
 
               {Array.isArray(savedRecord.recommendations) && savedRecord.recommendations.length > 0 && (

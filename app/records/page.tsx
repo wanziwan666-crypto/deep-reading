@@ -87,7 +87,8 @@ export default function RecordsPage() {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
-      minute: "2-digit"
+      minute: "2-digit",
+      timeZone: "Asia/Shanghai"
     })
   }
 
@@ -153,10 +154,12 @@ export default function RecordsPage() {
                 </button>
               </div>
               {!sidebarCollapsed && (
-                <div className="space-y-2">
+                <div className="space-y-2 overflow-y-scroll max-h-[calc(100vh-6rem)] pr-1">
                   {records.map((r, i) => {
-                    const clean = (s: string) => String(s || "").replace(/^\s*(核心论点(是)?|主要理由|主要证据|可能局限|要点|结论|摘要|概括)\s*[:：]\s*/g, "").trim()
-                    const title = clean(r.title || "") || clean((r.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) || (r.article || "").slice(0, 40) || "未命名文章"
+                    const clean = (s: string) =>
+                      String(s || "").replace(/^\s*(核心论点(是)?|主要理由|主要证据|可能局限|要点|结论|摘要|概括)\s*[:：]\s*/g, "").trim()
+                    const summaryHead = String(r.dialogueSummary || "").replace(/用户/g, "你").split(/[\n。.!?]/)[0] || ""
+                    const title = clean(summaryHead).slice(0, 40) || clean((r.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) || (r.article || "").slice(0, 40) || "未命名文章"
                     const active = i === selectedIndex
                     return (
                       <button
@@ -203,7 +206,7 @@ export default function RecordsPage() {
                       {r.dialogueSummary && (
                         <div>
                           <h4 className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1">对话摘要</h4>
-                          <p className="text-sm text-[var(--text-primary)]">{r.dialogueSummary}</p>
+                          <p className="text-sm text-[var(--text-primary)]">{String(r.dialogueSummary || "").replace(/用户/g, "你")}</p>
                         </div>
                       )}
                       {(r.stagedHistory?.length || r.frictionHistory?.length) && (

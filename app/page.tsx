@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { getState, setState, resetConversation } from "../state/conversationState"
+import { getState, setState, resetConversation, type ConversationState } from "../state/conversationState"
 
 export default function Page() {
   const [article, setArticleInput] = useState("")
@@ -12,12 +12,19 @@ export default function Page() {
   const [summaryError, setSummaryError] = useState("")
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [loadingSend, setLoadingSend] = useState(false)
+  const [loadingSaving, setLoadingSaving] = useState(false)
   const [thought, setThought] = useState("")
   const [bmTip, setBmTip] = useState("")
   const [showBmTooltip, setShowBmTooltip] = useState(false)
   const [records, setRecords] = useState<any[]>([])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [selectedRecordIndex, setSelectedRecordIndex] = useState<number | null>(null)
+  const [conv, setConv] = useState<ConversationState>(getState())
+  const [reply, setReply] = useState("")
+  const [showSavingModal, setShowSavingModal] = useState(false)
+  const [savedRecord, setSavedRecord] = useState<any | null>(null)
+  const [showSavedRecord, setShowSavedRecord] = useState(false)
+  const [showReturnConfirm, setShowReturnConfirm] = useState(false)
   const bmButtonRef = useRef<HTMLButtonElement>(null)
   const selectionLockedRef = useRef(false)
   const router = useRouter()
@@ -73,7 +80,14 @@ export default function Page() {
 
   const formatDate = (ts: number) => {
     const d = new Date(ts)
-    return d.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+    return d.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Asia/Shanghai"
+    })
   }
 
   const cleanTitle = (s: string) =>
@@ -199,8 +213,92 @@ export default function Page() {
     }
   }
 
+  const summarizeFromInputBar = async () => {
+    const hasHistory = (getState().stagedHistory?.length ?? 0) > 0
+    const inputVal = hasHistory ? reply.trim() : thought.trim()
+    if (!inputVal) return
+    setLoadingSummary(true)
+    try {
+      let articleText = ""
+      let articleTitle = ""
+      let articleUrl = ""
+      let articleSummaryText = ""
+      const isUrl = /^https?:\/\//i.test(inputVal)
+      if (isUrl) {
+        const res = await fetch("/api/summarize-article", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: inputVal })
+        })
+        if (res.ok) {
+          const data = await res.json()
+          articleText = String(data.article || "")
+          articleSummaryText = String(data.articleSummary || "")
+          articleTitle = String(data.title || "")
+          articleUrl = inputVal
+        } else {
+          // fallback to proxy-article-text then summarize
+          try {
+            const r2 = await fetch(`/api/proxy-article-text?url=${encodeURIComponent(inputVal)}`)
+            if (r2.ok) {
+              const j2 = await r2.json()
+              articleText = String(j2.article || "")
+              articleTitle = String(j2.title || "")
+              articleUrl = inputVal
+              if (articleText) {
+                const rs = await fetch("/api/summarize-article-text", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ article: articleText })
+                })
+                if (rs.ok) {
+                  const js = await rs.json()
+                  articleSummaryText = String(js.articleSummary || "")
+                }
+              }
+            }
+          } catch {}
+        }
+      } else {
+        // treat input as article text
+        articleText = inputVal
+        const rs = await fetch("/api/summarize-article-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ article: articleText })
+        })
+        if (rs.ok) {
+          const js = await rs.json()
+          articleSummaryText = String(js.articleSummary || "")
+        }
+      }
+      const current = getState()
+      const base = Array.isArray(current.stagedHistory) ? current.stagedHistory : []
+      const nextHistory = [...base, inputVal]
+      const aiMsg = articleSummaryText || "未能生成摘要，请检查输入是否有效"
+      const finalHistory = [...nextHistory, aiMsg]
+      const s = getState()
+      if (articleText) s.article = articleText
+      if (articleUrl) s.articleUrl = articleUrl
+      if (articleTitle && !s.articleTitle) s.articleTitle = articleTitle
+      if (articleSummaryText) s.articleSummary = articleSummaryText
+      s.stagedHistory = finalHistory
+      s.currentStage = s.currentStage || ""
+      s.currentRound = (s.currentRound || 0) + 1
+      setState(s)
+      setConv({ ...s })
+      if (hasHistory) {
+        setReply("")
+      } else {
+        setThought("")
+      }
+    } finally {
+      setLoadingSummary(false)
+    }
+  }
+
   const sendThought = async () => {
-    if (!article.trim() || !thought.trim()) return
+    if (!thought.trim()) return
     setLoadingSend(true)
     try {
       const prev = getState()
@@ -236,17 +334,119 @@ export default function Page() {
       s2.lastScoreReason = data.scoreReason ?? ""
       setState(s2)
       setThought("")
-      router.push("/chat")
+      setConv({ ...s2 })
     } finally {
       setLoadingSend(false)
     }
   }
 
+  const sendStagedHome = async () => {
+    if (!reply.trim()) return
+    setLoadingSend(true)
+    try {
+      const current = getState()
+      const base = Array.isArray(current.stagedHistory) ? current.stagedHistory : []
+      const nextHistory = [...base, reply.trim()]
+      const res = await fetch("/api/staged-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          article: current.article,
+          userInput: reply.trim(),
+          history: nextHistory,
+          lastScore: current.lastScore ?? 1
+        })
+      })
+      const data = await res.json()
+      const history = [...nextHistory, data.aiMessage ?? ""].filter(Boolean)
+      const s = getState()
+      s.stagedHistory = history
+      s.currentStage = data.stage ?? ""
+      s.currentRound = data.round ?? (s.currentRound || 1) + 1
+      s.lastScore = data.score ?? s.lastScore
+      s.lastScoreReason = data.scoreReason ?? s.lastScoreReason
+      setState(s)
+      setConv({ ...s })
+      setReply("")
+    } finally {
+      setLoadingSend(false)
+    }
+  }
+
+  const saveRecordHome = async () => {
+    setLoadingSaving(true)
+    setShowSavingModal(true)
+    try {
+      const s = getState()
+      const res = await fetch("/api/summarize-reading", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          article: s.article,
+          stagedHistory: s.stagedHistory,
+          frictionHistory: s.frictionHistory
+        })
+      })
+      const data = await res.json()
+      const dialogueSummary = String(data.dialogueSummary || "").replace(/用户/g, "你")
+      const articleSummaryToSave = String(s.articleSummary || "")
+      const currentTitle =
+        (s.articleTitle || "").trim() ||
+        (dialogueSummary.split(/[\n。.!?]/)[0] || "").slice(0, 40) ||
+        (articleSummaryToSave.split(/[\n。.!?]/)[0] || "").slice(0, 40) ||
+        (s.article || "").slice(0, 40)
+      const recBase = {
+        ts: Date.now(),
+        article: s.article,
+        url: s.articleUrl || "",
+        title: currentTitle || "",
+        articleSummary: articleSummaryToSave,
+        dialogueSummary,
+        stage: s.currentStage,
+        score: s.lastScore,
+        claim: s.selectedClaim,
+        premise: s.selectedPremise,
+        stagedHistory: s.stagedHistory,
+        frictionHistory: s.frictionHistory
+      }
+      let recommendations: any[] = []
+      try {
+        const r2 = await fetch("/api/recommend-reading", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stagedHistory: s.stagedHistory,
+            frictionHistory: s.frictionHistory
+          })
+        })
+        const d2 = await r2.json()
+        recommendations = Array.isArray(d2.recommendations) ? d2.recommendations : []
+      } catch {}
+      const rec = { ...recBase, recommendations }
+      if (typeof window !== "undefined") {
+        try {
+          const raw = window.localStorage.getItem("reading_records") || "[]"
+          const arr = Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : []
+          arr.unshift(rec)
+          window.localStorage.setItem("reading_records", JSON.stringify(arr))
+          setRecords(arr)
+          setSavedRecord(rec)
+          setShowSavedRecord(true)
+        } catch {
+          setSavedRecord(null)
+          setShowSavedRecord(false)
+        }
+      }
+    } finally {
+      setLoadingSaving(false)
+      setShowSavingModal(false)
+    }
+  }
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)]">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[var(--accent-light)] border-b border-[var(--accent)]/20 shadow-sm">
-        <div className="w-full px-4 h-16 flex items-center justify-between">
+        <div className="relative w-full px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3 ml-2 md:ml-4">
             <h1 className="text-xl md:text-2xl font-semibold text-[var(--text-primary)]">深度阅读</h1>
             <img
@@ -255,20 +455,51 @@ export default function Page() {
               className="h-9 w-auto"
             />
           </div>
-          <div className="flex items-center gap-2 mr-4 md:mr-6">
-            {selectedRecordIndex !== null && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2"
+            style={{ left: sidebarCollapsed ? "4rem" : "21rem" }}
+          >
+            {(selectedRecordIndex !== null || (getState().stagedHistory?.length ?? 0) > 0 || (getState().frictionHistory?.length ?? 0) > 0) && (
               <button
-                className="btn btn-ghost text-sm"
-                onClick={() => setSelectedRecordIndex(null)}
+                className="btn btn-ghost text-base hover:bg-transparent hover:text-[var(--text-primary)]"
+                onClick={() => {
+                  if (selectedRecordIndex !== null) {
+                    setSelectedRecordIndex(null)
+                  } else {
+                    const hasHistory = (getState().stagedHistory?.length ?? 0) > 0 || (getState().frictionHistory?.length ?? 0) > 0
+                    if (hasHistory) {
+                      setShowReturnConfirm(true)
+                    } else {
+                      resetConversation()
+                      const s = getState()
+                      setState(s)
+                      setConv({ ...s })
+                      setThought("")
+                      setReply("")
+                    }
+                  }
+                }}
               >
-                返回输入
+                <svg className="w-4 h-4 mr-0 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                返回
               </button>
             )}
-            
+          </div>
+          <div className="flex items-center gap-2 mr-4 md:mr-6">
+            <button
+              className={`btn btn-primary ${loadingSend || loadingSaving ? "opacity-60 pointer-events-none" : ""}`}
+              onClick={saveRecordHome}
+              disabled={loadingSaving || loadingSend}
+              title="生成阅读记录"
+            >
+              {loadingSaving ? <span className="spinner" /> : "生成阅读记录"}
+            </button>
             <div className="relative">
               <button
                 ref={bmButtonRef}
-                className="btn btn-ghost text-sm"
+                className="btn btn-ghost text-base hover:bg-transparent hover:text-[var(--text-primary)]"
                 onClick={async () => {
                   try {
                     const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
@@ -330,35 +561,55 @@ export default function Page() {
       <main className="w-full px-0 py-8">
         <div className="flex gap-4">
           <div className={`${sidebarCollapsed ? "w-12" : "w-80"} transition-all`}>
-            <div className="card p-3 md:p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm text-[var(--text-secondary)]">阅读记录</div>
-                <button className="btn btn-ghost text-xs" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
-                  <svg className={`w-4 h-4 text-[var(--text-tertiary)] ${sidebarCollapsed ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            {sidebarCollapsed ? (
+              <div className="pt-2">
+                <button
+                  className="w-10 h-10 rounded-lg bg-[var(--accent-light)] border border-[var(--accent)]/30 flex items-center justify-center"
+                  title="展开阅读记录"
+                  onClick={() => setSidebarCollapsed(false)}
+                >
+                  <svg className="w-4 h-4 text-[var(--text-tertiary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
               </div>
-              {!sidebarCollapsed && (
-                <div className="space-y-2">
-                  {records.slice(0, 50).map((r, i) => {
-                    const title = cleanTitle(r.title || "") || cleanTitle((r.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) || (r.article || "").slice(0, 40) || "未命名文章"
-                    const active = selectedRecordIndex === i
-                    return (
-                      <button
-                        key={`r-${r.ts}-${i}`}
-                        className={`w-full text-left p-3 rounded-lg border ${active ? "bg-[var(--accent-light)] border-[var(--accent)]/30" : "bg-[var(--bg-secondary)] border-[var(--border)] hover:bg-[var(--bg-tertiary)]"}`}
-                        title={title}
-                        onClick={() => setSelectedRecordIndex(i)}
-                      >
-                        <div className="text-sm font-semibold truncate">{title}</div>
-                        <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{formatDate(r.ts)}</div>
-                      </button>
-                    )
-                  })}
+            ) : (
+              <div className="card p-3 md:p-4 h-[calc(100vh-6rem)] flex flex-col">
+                <div className="-mx-3 md:-mx-4 -mt-3 md:-mt-4 px-3 md:px-4 py-2 bg-[var(--accent-light)] border-b border-[var(--accent)]/20 rounded-t-xl flex items-center justify-between">
+                  <div className="text-sm font-medium text-[var(--text-primary)]">阅读记录</div>
+                  <button className="btn btn-ghost text-xs" onClick={() => setSidebarCollapsed(true)}>
+                    <svg className="w-4 h-4 text-[var(--text-tertiary)] rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
                 </div>
-              )}
-            </div>
+                <div className="pt-2" />
+                <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
+                  {records.length === 0 ? (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="text-sm text-[var(--text-secondary)]">你还没有阅读记录哦，从现在开始吧！</div>
+                    </div>
+                  ) : (
+                    records.slice(0, 50).map((r, i) => {
+                      const summaryHead = String(r.dialogueSummary || "").replace(/用户/g, "你").split(/[\n。.!?]/)[0] || ""
+                      const title = cleanTitle(summaryHead).slice(0, 40) || cleanTitle((r.articleSummary || "").split(/[\n。.!?]/)[0] || "").slice(0, 40) || (r.article || "").slice(0, 40) || "未命名文章"
+                      const active = selectedRecordIndex === i
+                      return (
+                        <button
+                          key={`r-${r.ts}-${i}`}
+                          className={`w-full text-left p-3 rounded-lg border ${active ? "bg-[var(--accent-light)] border-[var(--accent)]/30" : "bg-[var(--bg-secondary)] border-[var(--border)] hover:bg-[var(--bg-tertiary)]"}`}
+                          title={title}
+                          onClick={() => setSelectedRecordIndex(i)}
+                        >
+                          <div className="text-sm font-semibold truncate">{title}</div>
+                          <div className="text-xs text-[var(--text-tertiary)] mt-0.5" suppressHydrationWarning>{formatDate(r.ts)}</div>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <div className="flex-1 min-w-0 px-6">
             <div className="space-y-4 max-w-5xl xl:max-w-6xl mx-auto">
@@ -391,7 +642,7 @@ export default function Page() {
                       {r.dialogueSummary && (
                         <div>
                           <h4 className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-1">对话摘要</h4>
-                          <p className="text-sm text-[var(--text-primary)]">{r.dialogueSummary}</p>
+                          <p className="text-sm text-[var(--text-primary)]">{String(r.dialogueSummary || "").replace(/用户/g, "你")}</p>
                         </div>
                       )}
                       {(r.stagedHistory?.length || r.frictionHistory?.length) && (
@@ -472,86 +723,221 @@ export default function Page() {
                 {bmTip}
               </div>
                 )}
-                <div className="card p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="w-6 h-6 rounded-full bg-[var(--accent-light)] text-[var(--accent)] text-xs font-medium flex items-center justify-center">1</span>
-                <h2 className="text-sm font-medium">输入文章</h2>
-              </div>
-              <div className="space-y-3">
-                <textarea className="textarea h-48" value={article} onChange={(e) => setArticleInput(e.target.value)} placeholder="粘贴文章链接或手动粘贴正文" />
-                <div className="flex gap-2">
-                  <button className="btn btn-secondary" onClick={summarizeFromText} disabled={!article.trim() || loadingSummary}>
-                    {loadingSummary ? <span className="spinner" /> : "生成摘要"}
-                  </button>
-                </div>
-                {summaryError && <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md">{summaryError}</div>}
-              </div>
-                </div>
-                {summary && (
+                
+                
+                {(getState().stagedHistory?.length > 0 || getState().frictionHistory?.length > 0) && (
                   <div className="card">
-                    <button className="collapsible-header w-full text-left" onClick={() => setShowSummary(!showSummary)}>
-                      <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-full bg-[var(--accent-light)] text-[var(--accent)] text-xs font-medium flex items-center justify-center">2</span>
-                        <span className="section-title">文章摘要</span>
-                      </div>
-                      <span className="text-xs text-[var(--text-tertiary)]">{showSummary ? "收起" : "展开"}</span>
-                    </button>
-                    {showSummary && (
-                      <div className="px-5 py-4">
-                        <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{summary}</p>
-                      </div>
-                    )}
+                    <div className="max-h-[50vh] overflow-auto p-4 space-y-4">
+                      {getState().stagedHistory?.length > 0 && (
+                        <>
+                          {getState().stagedHistory.map((msg, i) => (
+                            <div key={`staged-${i}`} className={`p-4 rounded-xl ${i % 2 === 0 ? "bubble-user" : "bubble-ai"}`}>
+                              <div className="text-xs text-[var(--text-tertiary)] mb-1">{i % 2 === 0 ? "你" : "AI 教练"}</div>
+                              <p className="text-sm leading-relaxed">{msg}</p>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                      {getState().frictionHistory?.length > 0 && (
+                        <>
+                          {getState().frictionHistory.map((msg, i) => (
+                            <div key={`friction-${i}`} className={`p-4 rounded-xl ${i % 2 === 0 ? "bubble-ai" : "bubble-user"}`}>
+                              <div className="text-xs text-[var(--text-tertiary)] mb-1">{i % 2 === 0 ? "AI 教练" : "你"}</div>
+                              <p className="text-sm leading-relaxed">{msg}</p>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
-                <div className="card p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="w-6 h-6 rounded-full bg-purple-100 text-purple-600 text-xs font-medium flex items-center justify-center">3</span>
-                <h2 className="text-sm font-medium">表达你的想法</h2>
-              </div>
-              <p className="text-sm text-[var(--text-tertiary)] mb-4">写下你对这篇文章的直觉、感受或初步观点，AI 教练会帮你深化思考</p>
-              <textarea className="textarea h-32 mb-4" value={thought} onChange={(e) => setThought(e.target.value)} placeholder="读完这篇文章后，你的第一反应是什么？" />
-              <button className="btn btn-primary" onClick={sendThought} disabled={!article.trim() || !thought.trim() || loadingSummary || loadingSend}>
-                {loadingSend ? <span className="spinner" /> : (<><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>开始思考对话</>)}
-              </button>
-                </div>
-                <div className="card p-5">
-              <h3 className="text-sm font-medium mb-3">使用提示</h3>
-              <ul className="space-y-3">
-                <li className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-full bg-[var(--accent-light)] text-[var(--accent)] text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                  </div>
-                  <div className="text-sm text-[var(--text-secondary)]">
-                    <span className="font-medium text-[var(--text-primary)]">粘贴文章链接</span>
-                    <span className="text-[var(--text-tertiary)]"> — 自动获取并总结文章内容</span>
-                  </div>
-                </li>
-                <li className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-full bg-purple-50 text-purple-600 text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                  </div>
-                  <div className="text-sm text-[var(--text-secondary)]">
-                    <span className="font-medium text-[var(--text-primary)]">思考对话</span>
-                    <span className="text-[var(--text-tertiary)]"> — AI 通过提问引导你深化观点、举出例子、接受挑战</span>
-                  </div>
-                </li>
-                <li className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-full bg-green-50 text-green-600 text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                  </div>
-                  <div className="text-sm text-[var(--text-secondary)]">
-                    <span className="font-medium text-[var(--text-primary)]">保存记录</span>
-                    <span className="text-[var(--text-tertiary)]"> — 结束后保存对话，获得个性化阅读推荐</span>
-                  </div>
-                </li>
-              </ul>
-                </div>
+                
               </>
             )}
             </div>
           </div>
         </div>
       </main>
+      {showReturnConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowReturnConfirm(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <div className="text-base font-medium text-gray-900 mb-2">确认返回？</div>
+            <div className="text-sm text-[var(--text-secondary)] mb-4">返回后当前对话将被清空。是否需要先生成阅读记录？</div>
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-ghost text-sm" onClick={() => setShowReturnConfirm(false)}>取消</button>
+              <button
+                className="btn btn-secondary text-sm"
+                disabled={loadingSaving}
+                onClick={() => {
+                  resetConversation()
+                  const s = getState()
+                  setState(s)
+                  setConv({ ...s })
+                  setThought("")
+                  setReply("")
+                  setShowReturnConfirm(false)
+                }}
+              >
+                直接返回
+              </button>
+              <button
+                className="btn btn-primary text-sm"
+                disabled={loadingSaving}
+                onClick={async () => {
+                  await saveRecordHome()
+                  resetConversation()
+                  const s = getState()
+                  setState(s)
+                  setConv({ ...s })
+                  setThought("")
+                  setReply("")
+                  setShowReturnConfirm(false)
+                }}
+              >
+                生成阅读记录并返回
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showSavingModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-8 flex flex-col items-center">
+            <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin mb-4" />
+            <p className="text-base font-medium text-gray-900 mb-2">正在生成阅读记录</p>
+            <p className="text-sm text-[var(--text-secondary)]">请稍候...</p>
+          </div>
+        </div>
+      )}
+      {showSavedRecord && savedRecord && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowSavedRecord(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-auto">
+            <div className="sticky top-0 bg-white border-b border-[var(--border-subtle)] px-6 py-4 flex items-center justify-between">
+              <div className="text-sm font-medium">已保存</div>
+              <div className="flex items-center gap-2">
+                <Link href="/records" className="btn btn-secondary text-xs">
+                  查看全部
+                </Link>
+                <button className="btn btn-ghost text-sm" onClick={() => setShowSavedRecord(false)}>
+                  关闭
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="text-sm text-[var(--text-secondary)]" suppressHydrationWarning>
+                {formatDate(savedRecord.ts)}
+              </div>
+              {savedRecord.url && (
+                <div className="text-sm">
+                  <span className="text-[var(--text-secondary)]">文章链接：</span>
+                  <a className="text-[#2563eb] hover:underline" href={savedRecord.url} target="_blank" rel="noreferrer">
+                    {savedRecord.url}
+                  </a>
+                </div>
+              )}
+              <div>
+                <h4 className="text-sm font-medium mb-1">文章摘要</h4>
+                <p className="text-sm text-[var(--text-secondary)]">{savedRecord.articleSummary || "无"}</p>
+              </div>
+              <div>
+                <h4 className="text-sm font-medium mb-1">对话摘要</h4>
+                <p className="text-sm text-[var(--text-secondary)]">{String(savedRecord.dialogueSummary || "").replace(/用户/g, "你") || "无"}</p>
+              </div>
+              {Array.isArray(savedRecord.recommendations) && savedRecord.recommendations.length > 0 && (
+                <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5 mt-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                    </svg>
+                    <h4 className="text-base font-semibold text-amber-900">推荐阅读</h4>
+                  </div>
+                  <ul className="space-y-3">
+                    {savedRecord.recommendations.map((r: any, i: number) => (
+                      <li key={i} className="bg-white/80 backdrop-blur-sm border border-amber-100 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-start gap-3">
+                          <span className="flex-shrink-0 w-6 h-6 bg-amber-500 text-white text-xs font-medium rounded-full flex items-center justify-center">{i + 1}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-gray-900">{r.title}</span>
+                              {r.author && <span className="text-sm text-[var(--text-secondary)]">（{r.author}）</span>}
+                              <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">{r.type}</span>
+                            </div>
+                            {r.reason && (
+                              <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-sm text-amber-900 leading-relaxed">
+                                {r.reason}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      <div
+        className="fixed bottom-0 right-0 z-40 bg-white"
+        style={{ left: sidebarCollapsed ? "4rem" : "21rem" }}
+      >
+        <div className="px-6 py-3">
+          <div className="max-w-5xl xl:max-w-6xl mx-auto">
+            <div className="flex items-end gap-4 w-full">
+            <textarea
+              className="textarea h-24 flex-1"
+              value={(getState().stagedHistory?.length ?? 0) > 0 ? reply : thought}
+              onChange={(e) => {
+                if ((getState().stagedHistory?.length ?? 0) > 0) {
+                  setReply(e.target.value)
+                } else {
+                  setThought(e.target.value)
+                }
+              }}
+              placeholder={(getState().stagedHistory?.length ?? 0) > 0 ? "请输入你的回复" : "粘贴文章或文章url，我可以帮你生成摘要"}
+              onKeyDown={(e) => {
+                const hasHistory = (getState().stagedHistory?.length ?? 0) > 0
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !loadingSend) {
+                  e.preventDefault()
+                  if (hasHistory) {
+                    if (reply.trim()) sendStagedHome()
+                  } else {
+                    if (thought.trim()) sendThought()
+                  }
+                }
+              }}
+            />
+            <div className="flex flex-col gap-1 h-24 justify-end w-32">
+              <button
+                className={`btn btn-primary h-11 ${loadingSaving ? "opacity-60 pointer-events-none" : ""}`}
+                onClick={() => {
+                  const hasHistory = (getState().stagedHistory?.length ?? 0) > 0
+                  if (hasHistory) {
+                    if (reply.trim()) sendStagedHome()
+                  } else {
+                    if (thought.trim()) sendThought()
+                  }
+                }}
+                disabled={loadingSend || loadingSaving || ((getState().stagedHistory?.length ?? 0) > 0 ? !reply.trim() : !thought.trim())}
+              >
+                {loadingSend ? <span className="spinner" /> : "回复"}
+              </button>
+              <button
+                className={`btn btn-secondary text-xs h-11 ${loadingSaving ? "opacity-60 pointer-events-none" : ""}`}
+                onClick={summarizeFromInputBar}
+                disabled={loadingSummary || loadingSaving || ((getState().stagedHistory?.length ?? 0) > 0 ? !reply.trim() : !thought.trim())}
+              >
+                {loadingSummary ? <span className="spinner" /> : "生成摘要"}
+              </button>
+            </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
