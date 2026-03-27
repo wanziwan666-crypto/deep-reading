@@ -115,8 +115,6 @@ export default function RecordsPage() {
                 try {
                   if (typeof window !== "undefined") {
                     window.localStorage.setItem("prefer_home_input", "1")
-                    e.preventDefault()
-                    window.location.href = "/?view=input"
                   }
                 } catch {}
               }}
