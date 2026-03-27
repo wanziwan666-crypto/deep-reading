@@ -23,6 +23,17 @@ export default function RecordsPage() {
   const [tip, setTip] = useState<string>("")
   const fileInputId = "import-records-input"
 
+  const mergeByTs = (base: RecordItem[], incoming: RecordItem[]) => {
+    const map = new Map<number, RecordItem>()
+    for (const r of base) map.set(Number(r?.ts) || 0, r)
+    for (const r of incoming) {
+      if (r && typeof r.ts === "number" && r.articleSummary && r.dialogueSummary) {
+        map.set(Number(r.ts) || 0, r)
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0))
+  }
+
   useEffect(() => {
     if (typeof window === "undefined") return
     try {
@@ -119,6 +130,56 @@ export default function RecordsPage() {
           </div>
           <div className="flex items-center gap-2 mr-4 md:mr-6">
             <button
+              className="btn btn-primary text-xs"
+              title="将本机阅读记录上传到服务器（匿名演示）"
+              onClick={async () => {
+                try {
+                  await fetch("/api/anon-init", { credentials: "include" })
+                  const body = { records }
+                  const r = await fetch("/api/records?action=merge", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                    credentials: "include"
+                  })
+                  if (!r.ok) throw new Error("bad")
+                  const j = await r.json()
+                  setTip(`已上传，共 ${j?.count ?? records.length} 条`)
+                  setTimeout(() => setTip(""), 2000)
+                } catch {
+                  setTip("上传失败，请检查服务端日志")
+                  setTimeout(() => setTip(""), 2500)
+                }
+              }}
+            >
+              上传到服务器
+            </button>
+            <button
+              className="btn btn-secondary text-xs"
+              title="从服务器拉取阅读记录（匿名演示）"
+              onClick={async () => {
+                try {
+                  await fetch("/api/anon-init", { credentials: "include" })
+                  const r = await fetch("/api/records", { credentials: "include" })
+                  if (!r.ok) throw new Error("bad")
+                  const j = await r.json()
+                  const srv = Array.isArray(j?.records) ? (j.records as RecordItem[]) : []
+                  const merged = mergeByTs(records, srv)
+                  setRecords(merged)
+                  if (typeof window !== "undefined") {
+                    window.localStorage.setItem("reading_records", JSON.stringify(merged))
+                  }
+                  setTip(`已从服务器拉取并合并 ${srv.length} 条`)
+                  setTimeout(() => setTip(""), 2000)
+                } catch {
+                  setTip("拉取失败，请检查服务端日志")
+                  setTimeout(() => setTip(""), 2500)
+                }
+              }}
+            >
+              从服务器拉取
+            </button>
+            <button
               className="btn btn-secondary text-xs"
               onClick={() => {
                 try {
@@ -156,16 +217,7 @@ export default function RecordsPage() {
                   const text = await f.text()
                   const arr = JSON.parse(text)
                   if (!Array.isArray(arr)) throw new Error("bad")
-                  const merged = (() => {
-                    const map = new Map<number, RecordItem>()
-                    for (const r of records) map.set(Number(r?.ts) || 0, r)
-                    for (const r of arr) {
-                      if (r && typeof r.ts === "number" && r.articleSummary && r.dialogueSummary) {
-                        map.set(Number(r.ts) || 0, r)
-                      }
-                    }
-                    return Array.from(map.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0))
-                  })()
+                  const merged = mergeByTs(records, arr as RecordItem[])
                   setRecords(merged)
                   if (typeof window !== "undefined") {
                     window.localStorage.setItem("reading_records", JSON.stringify(merged))
